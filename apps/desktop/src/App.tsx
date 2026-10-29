@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Chat } from "./pages/Chat";
 import { SettingsAI } from "./pages/SettingsAI";
 
 const SECTIONS = [
@@ -45,6 +46,8 @@ export function App() {
             <h2 className="mb-4 text-sm font-medium uppercase tracking-wide text-neutral-500">IA</h2>
             <SettingsAI />
           </div>
+        ) : active === "Chat" ? (
+          <div className="mt-4"><Chat /></div>
         ) : (
           <>
         <p className="mt-2 text-sm text-neutral-500">Version {version} — section en construction.</p>

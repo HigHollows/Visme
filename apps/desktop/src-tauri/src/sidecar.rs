@@ -1,9 +1,16 @@
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
+use tauri::{AppHandle, Emitter};
+use tokio::sync::oneshot;
 
 const KEYRING_SERVICE: &str = "app.assistant.desktop";
+
+type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<serde_json::Value, String>>>>>;
 
 /// Clé de chiffrement de la base : générée une fois, conservée dans le trousseau système.
 fn db_key(profile: &str) -> Result<String, String> {
@@ -40,16 +47,19 @@ pub fn load_api_key(provider: &str) -> Option<String> {
     api_key_entry(provider).ok()?.get_password().ok()
 }
 
+/// Processus Node enfant, parlant JSON-RPC ligne à ligne.
+/// Un thread lit stdout : les réponses (avec `id`) réveillent l'appelant,
+/// les notifications (sans `id`) sont relayées à l'UI sous l'événement `sidecar-event`.
 pub struct Sidecar {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: u64,
+    child: Mutex<Child>,
+    stdin: Mutex<ChildStdin>,
+    pending: Pending,
+    next_id: AtomicU64,
 }
 
 impl Sidecar {
     /// En dev on lance le script via node ; le packaging en binaire autonome viendra en phase 5.
-    pub fn spawn(root: PathBuf) -> Result<Self, String> {
+    pub fn spawn(root: PathBuf, app: AppHandle) -> Result<Arc<Self>, String> {
         let mut child = Command::new("node")
             .args(["--import", "tsx", "src/main.ts"])
             .current_dir(root.join("apps/sidecar"))
@@ -59,37 +69,58 @@ impl Sidecar {
             .spawn()
             .map_err(|e| format!("lancement du sidecar impossible: {e}"))?;
         let stdin = child.stdin.take().ok_or("stdin indisponible")?;
-        let stdout = BufReader::new(child.stdout.take().ok_or("stdout indisponible")?);
-        Ok(Self { child, stdin, stdout, next_id: 1 })
+        let stdout = child.stdout.take().ok_or("stdout indisponible")?;
+        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+
+        let pending_reader = pending.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+                if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
+                    let result = match msg.get("error") {
+                        Some(err) => Err(err["message"].as_str().unwrap_or("erreur RPC").to_string()),
+                        None => Ok(msg["result"].clone()),
+                    };
+                    if let Some(tx) = pending_reader.lock().unwrap().remove(&id) {
+                        let _ = tx.send(result);
+                    }
+                } else if msg.get("method").is_some() {
+                    let _ = app.emit("sidecar-event", msg);
+                }
+            }
+            // Le sidecar s'est arrêté : on réveille tous les appels en attente.
+            for (_, tx) in pending_reader.lock().unwrap().drain() {
+                let _ = tx.send(Err("le sidecar s'est arrêté".into()));
+            }
+        });
+
+        Ok(Arc::new(Self { child: Mutex::new(child), stdin: Mutex::new(stdin), pending, next_id: AtomicU64::new(1) }))
     }
 
-    pub fn call(&mut self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
+    pub async fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().unwrap().insert(id, tx);
         let req = serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-        writeln!(self.stdin, "{req}").map_err(|e| e.to_string())?;
-        self.stdin.flush().map_err(|e| e.to_string())?;
-        let mut line = String::new();
-        self.stdout.read_line(&mut line).map_err(|e| e.to_string())?;
-        if line.is_empty() {
-            return Err("le sidecar s'est arrêté".into());
+        {
+            let mut stdin = self.stdin.lock().unwrap();
+            if let Err(e) = writeln!(stdin, "{req}").and_then(|_| stdin.flush()) {
+                self.pending.lock().unwrap().remove(&id);
+                return Err(e.to_string());
+            }
         }
-        let resp: serde_json::Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
-        if let Some(err) = resp.get("error") {
-            return Err(err["message"].as_str().unwrap_or("erreur RPC").to_string());
-        }
-        Ok(resp["result"].clone())
+        rx.await.map_err(|_| "réponse perdue".to_string())?
     }
 
-    pub fn init(&mut self, data_dir: &str, profile: &str) -> Result<(), String> {
+    pub async fn init(&self, data_dir: &str, profile: &str) -> Result<(), String> {
         let key = db_key(profile)?;
-        self.call("init", serde_json::json!({"dataDir": data_dir, "key": key, "profile": profile}))?;
-        self.push_keys()
+        self.call("init", serde_json::json!({"dataDir": data_dir, "key": key, "profile": profile})).await?;
+        self.push_keys().await
     }
 
     /// Envoie au sidecar les clés API (du trousseau) des fournisseurs configurés ; elles restent en mémoire côté Node.
-    pub fn push_keys(&mut self) -> Result<(), String> {
-        let settings = self.call("settings.get", serde_json::json!({}))?;
+    pub async fn push_keys(&self) -> Result<(), String> {
+        let settings = self.call("settings.get", serde_json::json!({})).await?;
         let mut keys = serde_json::Map::new();
         if let Some(providers) = settings["ai"]["providers"].as_object() {
             for id in providers.keys() {
@@ -98,15 +129,21 @@ impl Sidecar {
                 }
             }
         }
-        self.call("ai.setKeys", serde_json::json!({ "keys": keys }))?;
+        self.call("ai.setKeys", serde_json::json!({ "keys": keys })).await?;
         Ok(())
     }
 }
 
 impl Drop for Sidecar {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        let _ = self.child.lock().unwrap().kill();
     }
 }
 
-pub struct SidecarState(pub Mutex<Option<Sidecar>>);
+pub struct SidecarState(pub Mutex<Option<Arc<Sidecar>>>);
+
+impl SidecarState {
+    pub fn get(&self) -> Result<Arc<Sidecar>, String> {
+        self.0.lock().unwrap().clone().ok_or_else(|| "sidecar non démarré".to_string())
+    }
+}

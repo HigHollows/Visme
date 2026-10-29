@@ -75,3 +75,96 @@ describe("rpc ai", () => {
     expect((await call(rpc, "ai.test", { provider: "inconnu" })).error).toBeDefined();
   });
 });
+
+describe("rpc chat", () => {
+  const sseBody = (...texts: string[]) =>
+    new Response(
+      [
+        { type: "message_start", message: { usage: { input_tokens: 3, output_tokens: 1 } } },
+        ...texts.map((t) => ({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: t } })),
+        { type: "message_delta", usage: { output_tokens: 2 } },
+      ]
+        .map((e) => `data: ${JSON.stringify(e)}\n\n`)
+        .join(""),
+    );
+
+  async function setup(fetchImpl: typeof fetch) {
+    const events: any[] = [];
+    const rpc = createApp({ fetch: fetchImpl, notify: (m, p) => events.push({ m, ...(p as object) }) });
+    await call(rpc, "init", { dataDir: mkdtempSync(join(tmpdir(), "app-")), key: "k" });
+    const s = (await call(rpc, "settings.get")).result;
+    s.ai.providers = { claude: { kind: "anthropic" } };
+    s.ai.routes = { chat: { primary: { provider: "claude", model: "m" } } };
+    await call(rpc, "settings.set", { settings: s });
+    await call(rpc, "ai.setKeys", { keys: { claude: "k" } });
+    const done = (id: string) =>
+      new Promise<void>((res) => {
+        const t = setInterval(() => events.some((e) => e.streamId === id && e.type === "done") && (clearInterval(t), res()), 5);
+      });
+    return { rpc, events, done };
+  }
+
+  it("diffuse la réponse, la persiste et enregistre l'historique", async () => {
+    const { rpc, events, done } = await setup((async () => sseBody("Bon", "jour")) as never);
+    const r = (await call(rpc, "chat.send", { streamId: "s1", text: "Salut" })).result;
+    await done("s1");
+    expect(events.filter((e) => e.type === "text").map((e) => e.text).join("")).toBe("Bonjour");
+    const msgs = (await call(rpc, "chat.get", { id: r.conversationId })).result;
+    expect(msgs.map((m: any) => [m.role, m.content])).toEqual([["user", "Salut"], ["assistant", "Bonjour"]]);
+    expect((await call(rpc, "chat.list")).result[0].title).toBe("Salut");
+  });
+
+  it("envoie l'historique au tour suivant", async () => {
+    const bodies: any[] = [];
+    const { rpc, done } = await setup((async (_u: string, init: RequestInit) => {
+      bodies.push(JSON.parse(init.body as string));
+      return sseBody("ok");
+    }) as never);
+    const r = (await call(rpc, "chat.send", { streamId: "a", text: "un" })).result;
+    await done("a");
+    await call(rpc, "chat.send", { streamId: "b", conversationId: r.conversationId, text: "deux" });
+    await done("b");
+    expect(bodies[1].messages.map((m: any) => m.content)).toEqual(["un", "ok", "deux"]);
+    expect(bodies[1].system).toContain("DONNÉE");
+  });
+
+  it("signale une erreur API sans planter", async () => {
+    const { rpc, events, done } = await setup((async () => new Response("no", { status: 401 })) as never);
+    await call(rpc, "chat.send", { streamId: "e", text: "x" });
+    await done("e");
+    expect(events.find((e) => e.type === "error")?.message).toContain("401");
+  });
+
+  it("refuse l'envoi sans route ou sans clé", async () => {
+    const rpc = createApp();
+    await call(rpc, "init", { dataDir: mkdtempSync(join(tmpdir(), "app-")), key: "k" });
+    expect((await call(rpc, "chat.send", { streamId: "x", text: "hi" })).error.code).toBe(-32010);
+    expect((await call(rpc, "chat.send", { streamId: "y", text: "  " })).error.code).toBe(-32602);
+  });
+
+  it("annule un flux en cours en conservant le texte reçu", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const enc = new TextEncoder();
+    const fetchImpl = (async (_u: string, init: RequestInit) => {
+      const stream = new ReadableStream({
+        async start(c) {
+          c.enqueue(enc.encode(`data: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "début" } })}\n\n`));
+          await gate;
+          if (init.signal?.aborted) c.error(new DOMException("abort", "AbortError"));
+          else c.close();
+        },
+      });
+      init.signal?.addEventListener("abort", release);
+      return new Response(stream);
+    }) as never;
+    const { rpc, events, done } = await setup(fetchImpl);
+    const r = (await call(rpc, "chat.send", { streamId: "c", text: "long" })).result;
+    await new Promise((r) => setTimeout(r, 50));
+    await call(rpc, "chat.cancel", { streamId: "c" });
+    await done("c");
+    expect(events.find((e) => e.type === "done").cancelled).toBe(true);
+    const msgs = (await call(rpc, "chat.get", { id: r.conversationId })).result;
+    expect(msgs.at(-1).content).toBe("début");
+  });
+});

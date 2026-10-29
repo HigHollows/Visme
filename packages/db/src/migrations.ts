@@ -56,4 +56,24 @@ export const migrations: Migration[] = [
       CREATE INDEX usage_log_at ON usage_log(at);
     `,
   },
+  {
+    version: 3,
+    sql: `
+      CREATE TABLE conversations (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,           -- user | assistant
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        model TEXT
+      );
+      CREATE INDEX messages_conv ON messages(conversation_id, id);
+    `,
+  },
 ];

@@ -4,10 +4,11 @@ import { audit, openDatabase, type Db } from "@assistant/db";
 import { migrateSettings, exportSettings, type Settings } from "@assistant/schemas";
 import { createProvider } from "@assistant/ai";
 import { usageTotals } from "./ai";
+import { registerChat, type Notify } from "./chat";
 import { RpcError, RpcServer } from "./rpc";
 
 /** Construit le serveur RPC. La base n'est ouverte qu'après `init` (clé fournie par le shell). */
-export function createApp(opts: { fetch?: typeof fetch } = {}): RpcServer {
+export function createApp(opts: { fetch?: typeof fetch; notify?: Notify } = {}): RpcServer {
   const rpc = new RpcServer();
   /** Clés API en mémoire uniquement ; elles viennent du trousseau via le shell. */
   const keys = new Map<string, string>();
@@ -71,6 +72,8 @@ export function createApp(opts: { fetch?: typeof fetch } = {}): RpcServer {
     if (!key) return { ok: false, error: "Aucune clé API enregistrée" };
     return createProvider(p.provider, cfg, key, opts.fetch).testConnection();
   });
+
+  registerChat({ rpc, db: need, settings: loadSettings, keys, fetch: opts.fetch, notify: opts.notify ?? (() => {}) });
 
   rpc.register("audit.list", (p: { limit?: number }) =>
     need()
