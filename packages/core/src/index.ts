@@ -19,3 +19,4 @@ export * from "./style";
 export * from "./plugins/manager";
 export * from "./meetings/service";
 export * from "./meetings/minutes";
+export * from "./capture";

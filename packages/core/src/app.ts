@@ -16,6 +16,7 @@ import { PresetService } from "./presets";
 import { DraftService, StyleService } from "./style";
 import { PluginManager } from "./plugins/manager";
 import { MeetingService } from "./meetings/service";
+import { CaptureService } from "./capture";
 import { ProposalService } from "./proposals";
 import { search } from "./search";
 import { TaskService } from "./tasks";
@@ -255,6 +256,15 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   rpc.register("meetings.reprocess", (p: { id: string }) => {
     void meetings().reprocess(p.id).catch(() => {});
     return { started: true };
+  });
+
+  let captureSvc: CaptureService | null = null;
+  const capture = () =>
+    (captureSvc ??= new CaptureService({ db: need(), dataDir: dataDirPath, settings: loadSettings, router: getRouter, tasks: tasks(), cal: cal(), proposals: proposals(), documents: { add: (p) => docs().add(p) }, now: opts.now }));
+  rpc.register("capture.submit", async (p: any) => {
+    const r = await capture().submit(p ?? {});
+    notify("proposals.event", { pending: proposals().count() });
+    return r;
   });
 
   let styleSvc: StyleService | null = null;
