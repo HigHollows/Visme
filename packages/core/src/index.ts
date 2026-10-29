@@ -15,3 +15,4 @@ export * from "./tasks";
 export * from "./proposals";
 export * from "./presets";
 export * from "./retrieval";
+export * from "./style";

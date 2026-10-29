@@ -109,7 +109,7 @@ export class Agent {
     const last = this.d.db
       .prepare("SELECT id, started_at AS startedAt, finished_at AS finishedAt, summary, error FROM agent_runs ORDER BY id DESC LIMIT 1")
       .get();
-    const pendingMails = (this.d.db.prepare("SELECT count(*) AS n FROM mails WHERE analyzed_at IS NULL AND analysis_error IS NULL").get() as { n: number }).n;
+    const pendingMails = (this.d.db.prepare(`SELECT count(*) AS n FROM mails WHERE analyzed_at IS NULL AND analysis_error IS NULL AND labels NOT LIKE '%"SENT"%'`).get() as { n: number }).n;
     return {
       enabled: this.d.settings().agent.enabled,
       running: this.running,
@@ -181,7 +181,7 @@ export class Agent {
     const mails = this.d.db
       .prepare(
         `SELECT id, subject, from_name AS fromName, from_addr AS fromAddr, date, body FROM mails
-         WHERE analyzed_at IS NULL AND analysis_error IS NULL ORDER BY date DESC LIMIT ?`,
+         WHERE analyzed_at IS NULL AND analysis_error IS NULL AND labels NOT LIKE '%"SENT"%' ORDER BY date DESC LIMIT ?`,
       )
       .all(BATCH_PER_CYCLE) as MailForAnalysis[];
 

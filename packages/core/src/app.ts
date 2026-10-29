@@ -13,6 +13,7 @@ import type { Feature } from "./google";
 import { MailService } from "./mail";
 import { MemoryService } from "./memory";
 import { PresetService } from "./presets";
+import { DraftService, StyleService } from "./style";
 import { ProposalService } from "./proposals";
 import { search } from "./search";
 import { TaskService } from "./tasks";
@@ -213,10 +214,27 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   let presetSvc: PresetService | null = null;
   const presets = () => (presetSvc ??= new PresetService(need()));
 
+  let styleSvc: StyleService | null = null;
+  const style = () => (styleSvc ??= new StyleService({ db: need(), settings: loadSettings, router: getRouter }));
+  let draftSvc: DraftService | null = null;
+  const drafts = () => (draftSvc ??= new DraftService({ db: need(), settings: loadSettings, router: getRouter }, style()));
+
   registerChat({
     rpc, db: need, settings: loadSettings, keys, fetch: opts.fetch, notify,
     presets, memory, proposals, cal,
+    styleHint: () => style().hint(null),
   });
+
+  rpc.register("style.list", () => ({ profiles: style().list(), groups: style().groups(), learningEnabled: loadSettings().style.learningEnabled }));
+  rpc.register("style.set", (p: { scope: string; profile: unknown }) => (style().set(p.scope, p.profile, "manual"), { ok: true }));
+  rpc.register("style.delete", (p: { scope: string }) => (style().delete(p.scope), { ok: true }));
+  rpc.register("style.learn", (p: { scope?: string }) => style().learn(p?.scope ?? "global"));
+  rpc.register("style.reset", () => ({ removed: style().resetLearned() }));
+  rpc.register("style.setGroup", (p: { addr: string; group: string | null }) => (style().setGroup(p.addr, p.group), { ok: true }));
+  rpc.register("drafts.list", (p: { mailId: string }) => drafts().list(p.mailId));
+  rpc.register("drafts.reply", (p: any) => drafts().reply(p));
+  rpc.register("drafts.update", (p: { id: string; body: string }) => (drafts().update(p.id, p.body), { ok: true }));
+  rpc.register("drafts.delete", (p: { id: string }) => (drafts().delete(p.id), { ok: true }));
 
   rpc.register("presets.list", () => presets().list());
   rpc.register("presets.create", (p: any) => presets().create(p));
