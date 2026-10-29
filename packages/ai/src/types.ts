@@ -3,7 +3,10 @@ export type Role = "system" | "user" | "assistant" | "tool";
 export interface ChatMessage {
   role: Role;
   content: string;
+  /** Pour role "tool" : l'appel auquel ce message répond. */
   toolCallId?: string;
+  /** Pour role "assistant" : appels d'outils émis à ce tour. */
+  toolCalls?: { id: string; name: string; args: unknown }[];
 }
 
 export interface ToolDef {

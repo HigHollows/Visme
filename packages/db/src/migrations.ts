@@ -42,4 +42,18 @@ export const migrations: Migration[] = [
       END;
     `,
   },
+  {
+    version: 2,
+    sql: `
+      CREATE TABLE usage_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at INTEGER NOT NULL,
+        task TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        usd REAL NOT NULL
+      );
+      CREATE INDEX usage_log_at ON usage_log(at);
+    `,
+  },
 ];

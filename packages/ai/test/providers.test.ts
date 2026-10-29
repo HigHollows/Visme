@@ -1,0 +1,118 @@
+import { describe, expect, it } from "vitest";
+import { AIError, AnthropicProvider, OpenAIProvider, type ChatChunk } from "../src";
+
+const sse = (events: object[], done = false) =>
+  new Response(
+    events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("") + (done ? "data: [DONE]\n\n" : ""),
+    { status: 200, headers: { "content-type": "text/event-stream" } },
+  );
+
+async function collect(it: AsyncIterable<ChatChunk>) {
+  const out: ChatChunk[] = [];
+  for await (const c of it) out.push(c);
+  return out;
+}
+
+describe("AnthropicProvider", () => {
+  it("diffuse le texte, assemble un appel d'outil et renvoie l'usage", async () => {
+    let sent: any;
+    const p = new AnthropicProvider({
+      apiKey: "k",
+      fetch: (async (url: string, init: RequestInit) => {
+        sent = { url, headers: init.headers, body: JSON.parse(init.body as string) };
+        return sse([
+          { type: "message_start", message: { usage: { input_tokens: 10, output_tokens: 1 } } },
+          { type: "content_block_start", index: 0, content_block: { type: "text" } },
+          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Sal" } },
+          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ut" } },
+          { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "t1", name: "cree_tache" } },
+          { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"titre":' } },
+          { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '"X"}' } },
+          { type: "content_block_stop", index: 1 },
+          { type: "message_delta", usage: { output_tokens: 7 } },
+        ]);
+      }) as never,
+    });
+    const chunks = await collect(
+      p.chat({
+        model: "m",
+        messages: [
+          { role: "system", content: "sys" },
+          { role: "user", content: "hi" },
+        ],
+      }),
+    );
+    expect(chunks.filter((c) => c.type === "text").map((c: any) => c.text).join("")).toBe("Salut");
+    expect(chunks).toContainEqual({ type: "tool_call", id: "t1", name: "cree_tache", args: { titre: "X" } });
+    expect(chunks).toContainEqual({ type: "usage", inputTokens: 10, outputTokens: 7 });
+    expect(sent.body.system).toBe("sys");
+    expect(sent.body.messages).toEqual([{ role: "user", content: "hi" }]);
+    expect(sent.headers["x-api-key"]).toBe("k");
+  });
+
+  it("classe les erreurs HTTP", async () => {
+    const mk = (status: number) =>
+      new AnthropicProvider({ apiKey: "k", fetch: (async () => new Response("no", { status })) as never });
+    await expect(collect(mk(429).chat({ model: "m", messages: [] }))).rejects.toMatchObject({ kind: "rate_limit" });
+    await expect(collect(mk(401).chat({ model: "m", messages: [] }))).rejects.toMatchObject({ kind: "auth" });
+    await expect(collect(mk(529).chat({ model: "m", messages: [] }))).rejects.toMatchObject({ kind: "unavailable" });
+  });
+
+  it("testConnection : ok / refus / réseau", async () => {
+    const ok = new AnthropicProvider({ apiKey: "k", fetch: (async () => new Response("{}")) as never });
+    expect(await ok.testConnection()).toEqual({ ok: true });
+    const bad = new AnthropicProvider({ apiKey: "k", fetch: (async () => new Response("x", { status: 401 })) as never });
+    expect((await bad.testConnection()).ok).toBe(false);
+    const down = new AnthropicProvider({ apiKey: "k", fetch: (async () => { throw new Error("ECONNREFUSED"); }) as never });
+    expect((await down.testConnection()).error).toContain("ECONNREFUSED");
+  });
+
+  it("ne propose pas d'embeddings", async () => {
+    await expect(new AnthropicProvider({ apiKey: "k" }).embed()).rejects.toBeInstanceOf(AIError);
+  });
+});
+
+describe("OpenAIProvider", () => {
+  it("diffuse, assemble les appels d'outils fragmentés et lit l'usage", async () => {
+    const p = new OpenAIProvider({
+      apiKey: "k",
+      fetch: (async () =>
+        sse(
+          [
+            { choices: [{ delta: { content: "Bon" } }] },
+            { choices: [{ delta: { content: "jour" } }] },
+            { choices: [{ delta: { tool_calls: [{ index: 0, id: "c1", function: { name: "agenda", arguments: '{"a"' } }] } }] },
+            { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: ":1}" } }] } }] },
+            { choices: [], usage: { prompt_tokens: 5, completion_tokens: 3 } },
+          ],
+          true,
+        )) as never,
+    });
+    const chunks = await collect(p.chat({ model: "m", messages: [{ role: "user", content: "x" }] }));
+    expect(chunks.filter((c) => c.type === "text").map((c: any) => c.text).join("")).toBe("Bonjour");
+    expect(chunks).toContainEqual({ type: "tool_call", id: "c1", name: "agenda", args: { a: 1 } });
+    expect(chunks).toContainEqual({ type: "usage", inputTokens: 5, outputTokens: 3 });
+  });
+
+  it("embeddings : remet les vecteurs dans l'ordre", async () => {
+    const p = new OpenAIProvider({
+      apiKey: "k",
+      fetch: (async () =>
+        new Response(JSON.stringify({ data: [{ index: 1, embedding: [2] }, { index: 0, embedding: [1] }] }))) as never,
+    });
+    expect(await p.embed(["a", "b"], "m")).toEqual([[1], [2]]);
+  });
+
+  it("utilise la baseUrl d'un endpoint compatible", async () => {
+    let url = "";
+    const p = new OpenAIProvider({
+      apiKey: "k",
+      baseUrl: "https://exemple.test/v1/",
+      id: "mistral",
+      fetch: (async (u: string) => { url = u; return new Response("{}"); }) as never,
+    });
+    await p.testConnection();
+    expect(url).toBe("https://exemple.test/v1/models");
+    expect(p.id).toBe("mistral");
+  });
+});

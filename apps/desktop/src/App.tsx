@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { SettingsAI } from "./pages/SettingsAI";
 
 const SECTIONS = [
   "Accueil", "Mails", "Calendrier", "Tâches", "Documents", "Échéances",
@@ -37,10 +38,19 @@ export function App() {
           ))}
         </ul>
       </nav>
-      <main className="flex-1 p-8">
+      <main className="flex-1 overflow-y-auto p-8">
         <h1 className="text-2xl font-semibold">{active}</h1>
+        {active === "Settings" ? (
+          <div className="mt-4">
+            <h2 className="mb-4 text-sm font-medium uppercase tracking-wide text-neutral-500">IA</h2>
+            <SettingsAI />
+          </div>
+        ) : (
+          <>
         <p className="mt-2 text-sm text-neutral-500">Version {version} — section en construction.</p>
         <p className="mt-1 text-sm text-neutral-500">Autonomie (via sidecar + base chiffrée) : {autonomy}</p>
+          </>
+        )}
       </main>
     </div>
   );

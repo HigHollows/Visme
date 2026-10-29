@@ -2,11 +2,15 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { audit, openDatabase, type Db } from "@assistant/db";
 import { migrateSettings, exportSettings, type Settings } from "@assistant/schemas";
+import { createProvider } from "@assistant/ai";
+import { usageTotals } from "./ai";
 import { RpcError, RpcServer } from "./rpc";
 
 /** Construit le serveur RPC. La base n'est ouverte qu'après `init` (clé fournie par le shell). */
-export function createApp(): RpcServer {
+export function createApp(opts: { fetch?: typeof fetch } = {}): RpcServer {
   const rpc = new RpcServer();
+  /** Clés API en mémoire uniquement ; elles viennent du trousseau via le shell. */
+  const keys = new Map<string, string>();
   let db: Db | null = null;
   const need = (): Db => {
     if (!db) throw new RpcError(-32001, "Application non initialisée");
@@ -43,6 +47,30 @@ export function createApp(): RpcServer {
   });
 
   rpc.register("settings.export", () => exportSettings(loadSettings()));
+
+  rpc.register("ai.setKeys", (p: { keys: Record<string, string> }) => {
+    for (const [id, k] of Object.entries(p.keys)) {
+      if (k) keys.set(id, k);
+      else keys.delete(id);
+    }
+    return { configured: [...keys.keys()] };
+  });
+
+  rpc.register("ai.status", () => {
+    const s = loadSettings();
+    return {
+      providers: Object.keys(s.ai.providers).map((id) => ({ id, hasKey: keys.has(id) })),
+      usage: usageTotals(need()),
+    };
+  });
+
+  rpc.register("ai.test", async (p: { provider: string }) => {
+    const cfg = loadSettings().ai.providers[p.provider];
+    if (!cfg) throw new RpcError(-32602, "Fournisseur inconnu");
+    const key = keys.get(p.provider);
+    if (!key) return { ok: false, error: "Aucune clé API enregistrée" };
+    return createProvider(p.provider, cfg, key, opts.fetch).testConnection();
+  });
 
   rpc.register("audit.list", (p: { limit?: number }) =>
     need()

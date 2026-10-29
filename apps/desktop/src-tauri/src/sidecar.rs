@@ -21,6 +21,25 @@ fn db_key(profile: &str) -> Result<String, String> {
     }
 }
 
+fn api_key_entry(provider: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, &format!("api-key:{provider}")).map_err(|e| e.to_string())
+}
+
+pub fn store_api_key(provider: &str, key: &str) -> Result<(), String> {
+    api_key_entry(provider)?.set_password(key).map_err(|e| e.to_string())
+}
+
+pub fn delete_api_key(provider: &str) -> Result<(), String> {
+    match api_key_entry(provider)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+pub fn load_api_key(provider: &str) -> Option<String> {
+    api_key_entry(provider).ok()?.get_password().ok()
+}
+
 pub struct Sidecar {
     child: Child,
     stdin: ChildStdin,
@@ -65,6 +84,21 @@ impl Sidecar {
     pub fn init(&mut self, data_dir: &str, profile: &str) -> Result<(), String> {
         let key = db_key(profile)?;
         self.call("init", serde_json::json!({"dataDir": data_dir, "key": key, "profile": profile}))?;
+        self.push_keys()
+    }
+
+    /// Envoie au sidecar les clés API (du trousseau) des fournisseurs configurés ; elles restent en mémoire côté Node.
+    pub fn push_keys(&mut self) -> Result<(), String> {
+        let settings = self.call("settings.get", serde_json::json!({}))?;
+        let mut keys = serde_json::Map::new();
+        if let Some(providers) = settings["ai"]["providers"].as_object() {
+            for id in providers.keys() {
+                if let Some(k) = load_api_key(id) {
+                    keys.insert(id.clone(), serde_json::Value::String(k));
+                }
+            }
+        }
+        self.call("ai.setKeys", serde_json::json!({ "keys": keys }))?;
         Ok(())
     }
 }

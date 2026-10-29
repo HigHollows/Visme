@@ -28,8 +28,8 @@ export class CostTracker {
     this.limits = l;
   }
 
-  record(usd: number) {
-    this.records.push({ at: this.now(), usd });
+  record(usd: number, at: number = this.now()) {
+    this.records.push({ at, usd });
   }
 
   private sumSince(start: number) {

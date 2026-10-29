@@ -47,3 +47,31 @@ describe("rpc app", () => {
     expect(r.result.ok).toBe(true); // nom assaini en "evil"
   });
 });
+
+describe("rpc ai", () => {
+  it("teste la connexion avec la clé en mémoire, sans jamais la renvoyer", async () => {
+    let auth = "";
+    const rpc = createApp({
+      fetch: (async (_u: string, init: RequestInit) => {
+        auth = (init.headers as Record<string, string>)["x-api-key"] ?? "";
+        return new Response("{}");
+      }) as never,
+    });
+    await call(rpc, "init", { dataDir: mkdtempSync(join(tmpdir(), "app-")), key: "k" });
+    const s = (await call(rpc, "settings.get")).result;
+    s.ai.providers = { claude: { kind: "anthropic" } };
+    await call(rpc, "settings.set", { settings: s });
+
+    expect((await call(rpc, "ai.test", { provider: "claude" })).result).toEqual({
+      ok: false,
+      error: "Aucune clé API enregistrée",
+    });
+    await call(rpc, "ai.setKeys", { keys: { claude: "sk-ant-secret" } });
+    const status = await call(rpc, "ai.status");
+    expect(status.result.providers).toEqual([{ id: "claude", hasKey: true }]);
+    expect(JSON.stringify(status)).not.toContain("sk-ant-secret");
+    expect((await call(rpc, "ai.test", { provider: "claude" })).result).toEqual({ ok: true });
+    expect(auth).toBe("sk-ant-secret");
+    expect((await call(rpc, "ai.test", { provider: "inconnu" })).error).toBeDefined();
+  });
+});
