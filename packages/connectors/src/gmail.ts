@@ -24,6 +24,8 @@ export interface MailMessage {
   bodyText: string;
   labels: string[];
   attachments: MailAttachment[];
+  /** Message-ID RFC 5322 (sert à répondre dans le même fil). */
+  messageId?: string;
 }
 
 export class HistoryExpiredError extends Error {
@@ -96,6 +98,7 @@ export function parseMessage(m: any): MailMessage {
     bodyText: body,
     labels: m.labelIds ?? [],
     attachments,
+    messageId: header("Message-ID") || header("Message-Id") || undefined,
   };
 }
 
@@ -108,12 +111,16 @@ export class GmailClient {
     this.sleep = o.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
-  private async req(path: string, retried = false): Promise<any> {
+  private async req(path: string, init?: { method?: string; body?: unknown }): Promise<any> {
     let token = await this.o.getAccessToken();
     let refreshed = false;
     for (let attempt = 0; ; attempt++) {
-      const res = await this.f(`${API}${path}`, { headers: { authorization: `Bearer ${token}` } });
-      if (res.ok) return res.json();
+      const res = await this.f(`${API}${path}`, {
+        method: init?.method ?? "GET",
+        headers: { authorization: `Bearer ${token}`, ...(init?.body !== undefined && { "content-type": "application/json" }) },
+        ...(init?.body !== undefined && { body: JSON.stringify(init.body) }),
+      });
+      if (res.ok) return res.status === 204 ? null : res.json();
       if (res.status === 401 && !refreshed && this.o.refreshAccessToken) {
         token = await this.o.refreshAccessToken();
         refreshed = true;
@@ -126,6 +133,17 @@ export class GmailClient {
       }
       throw new GmailError(`Gmail ${res.status}: ${(await res.text()).slice(0, 200)}`, res.status);
     }
+  }
+
+  /** Contenu d'une pièce jointe (base64url → octets). */
+  async getAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
+    const r = await this.req(`/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`);
+    return Buffer.from(String(r.data ?? ""), "base64url");
+  }
+
+  /** Envoie un message RFC 822 déjà construit (permission gmail.send). */
+  async sendRaw(raw: Buffer, threadId?: string): Promise<void> {
+    await this.req("/messages/send", { method: "POST", body: { raw: raw.toString("base64url"), ...(threadId && { threadId }) } });
   }
 
   async profile(): Promise<{ email: string; historyId: string }> {

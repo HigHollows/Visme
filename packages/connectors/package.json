@@ -4,6 +4,19 @@
   "private": true,
   "type": "module",
   "main": "src/index.ts",
-  
-  "scripts": {}
+  "scripts": {},
+  "dependencies": {
+    "ical.js": "^2.2.1",
+    "imapflow": "^2.9.1",
+    "mailparser": "^3.12.4",
+    "nodemailer": "^10.2.1",
+    "pdf-lib": "^1.17.1",
+    "tsdav": "^2.5.0"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.9.0",
+    "@types/nodemailer": "^8.0.2",
+    "@types/smtp-server": "^3.5.13",
+    "smtp-server": "^3.21.1"
+  }
 }

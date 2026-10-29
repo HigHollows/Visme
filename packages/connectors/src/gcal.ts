@@ -16,6 +16,15 @@ export interface CalEvent {
   link: string;
 }
 
+export interface EventWrite {
+  title: string;
+  start: number;
+  end: number;
+  allDay: boolean;
+  location?: string;
+  description?: string;
+}
+
 export class SyncTokenExpiredError extends Error {
   constructor() {
     super("Jeton de synchronisation du calendrier expiré");
@@ -78,12 +87,16 @@ export class CalendarClient {
     this.sleep = o.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
-  private async get(url: string): Promise<any> {
+  private async get(url: string, init?: { method?: string; body?: unknown }): Promise<any> {
     let token = await this.o.getAccessToken();
     let refreshed = false;
     for (let attempt = 0; ; attempt++) {
-      const res = await this.f(url, { headers: { authorization: `Bearer ${token}` } });
-      if (res.ok) return res.json();
+      const res = await this.f(url, {
+        method: init?.method ?? "GET",
+        headers: { authorization: `Bearer ${token}`, ...(init?.body !== undefined && { "content-type": "application/json" }) },
+        ...(init?.body !== undefined && { body: JSON.stringify(init.body) }),
+      });
+      if (res.ok) return res.status === 204 ? null : res.json();
       if (res.status === 401 && !refreshed && this.o.refreshAccessToken) {
         token = await this.o.refreshAccessToken();
         refreshed = true;
@@ -100,6 +113,35 @@ export class CalendarClient {
         }
       }
       throw new CalendarApiError(`Calendar ${res.status}: ${(await res.text()).slice(0, 200)}`, res.status);
+    }
+  }
+
+  // --- écriture (permission calendar.events) ---
+
+  /** Corps d'événement Google : « toute la journée » en dates locales (fin exclusive), sinon date-heure ISO. */
+  private body(e: EventWrite) {
+    const day = (t: number) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+    return {
+      summary: e.title, description: e.description ?? "", location: e.location ?? "",
+      start: e.allDay ? { date: day(e.start) } : { dateTime: new Date(e.start).toISOString() },
+      end: e.allDay ? { date: day(Math.max(e.end, e.start + 86_400_000)) } : { dateTime: new Date(Math.max(e.end, e.start)).toISOString() },
+    };
+  }
+
+  async createEvent(calendarId: string, e: EventWrite): Promise<string> {
+    const r = await this.get(`${API}/${encodeURIComponent(calendarId)}/events`, { method: "POST", body: this.body(e) });
+    return String(r.id);
+  }
+
+  async updateEvent(calendarId: string, remoteId: string, e: EventWrite): Promise<void> {
+    await this.get(`${API}/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(remoteId)}`, { method: "PATCH", body: this.body(e) });
+  }
+
+  async deleteEvent(calendarId: string, remoteId: string): Promise<void> {
+    try {
+      await this.get(`${API}/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(remoteId)}`, { method: "DELETE" });
+    } catch (err) {
+      if (!(err instanceof CalendarApiError && (err.status === 404 || err.status === 410))) throw err; // déjà supprimé
     }
   }
 

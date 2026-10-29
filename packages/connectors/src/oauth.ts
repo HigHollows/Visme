@@ -42,6 +42,8 @@ export interface FlowOptions {
   timeoutMs?: number;
   /** Paramètres supplémentaires de l'URL d'autorisation (ex. login_hint). */
   extraParams?: Record<string, string>;
+  /** Nom d'hôte de l'URI de redirection (Google : 127.0.0.1 ; Microsoft exige « localhost »). Le serveur n'écoute que sur 127.0.0.1. */
+  redirectHost?: string;
 }
 
 const DONE_PAGE = (ok: boolean) =>
@@ -111,7 +113,7 @@ export async function authorize(o: FlowOptions): Promise<Tokens> {
     else if (code) resolveCode(code);
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const redirectUri = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const redirectUri = `http://${o.redirectHost ?? "127.0.0.1"}:${(server.address() as AddressInfo).port}`;
 
   const timer = setTimeout(() => rejectCode(new OAuthError("Délai dépassé : connexion non terminée")), o.timeoutMs ?? 300_000);
   try {
