@@ -180,4 +180,56 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 7,
+    sql: `
+      ALTER TABLE mails ADD COLUMN analyzed_at INTEGER;
+      ALTER TABLE mails ADD COLUMN analysis_error TEXT;
+      ALTER TABLE audit_log ADD COLUMN undone_at INTEGER;
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        due_at INTEGER,
+        priority INTEGER NOT NULL DEFAULT 0,   -- 0 normale, 1 haute
+        status TEXT NOT NULL DEFAULT 'open',   -- open | done
+        project TEXT,
+        labels TEXT NOT NULL DEFAULT '[]',
+        parent_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+        recurrence TEXT,                       -- réservé : règle de récurrence
+        source_ref TEXT,                       -- JSON {type, id} : lien vers le mail/document d'origine
+        ai_added INTEGER NOT NULL DEFAULT 0,
+        confidence REAL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER
+      );
+      CREATE INDEX tasks_status_due ON tasks(status, due_at);
+      CREATE TABLE proposals (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,                    -- event | task
+        status TEXT NOT NULL DEFAULT 'pending',-- pending | accepted | rejected | auto
+        title TEXT NOT NULL,
+        payload TEXT NOT NULL,                 -- JSON de l'action proposée
+        reason TEXT NOT NULL,
+        source_ref TEXT,
+        source_key TEXT,                       -- expéditeur : sert à apprendre des refus
+        confidence REAL NOT NULL,
+        dedupe_key TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL,
+        decided_at INTEGER,
+        result_ref TEXT
+      );
+      CREATE INDEX proposals_status ON proposals(status, created_at);
+      CREATE TABLE agent_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER,
+        trigger TEXT NOT NULL,                 -- schedule | manual
+        summary TEXT,
+        stats TEXT NOT NULL DEFAULT '{}',
+        error TEXT
+      );
+    `,
+  },
 ];

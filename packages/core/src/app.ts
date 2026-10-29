@@ -5,10 +5,14 @@ import { migrateSettings, exportSettings, type Settings } from "@assistant/schem
 import { createProvider } from "@assistant/ai";
 import { buildProviders, buildRouter, usageTotals } from "./ai";
 import { DocumentPipeline } from "./documents/pipeline";
+import { Agent } from "./agent/agent";
 import { CalendarService } from "./calendar";
 import type { Feature } from "./google";
 import { MailService } from "./mail";
+import { ProposalService } from "./proposals";
 import { search } from "./search";
+import { TaskService } from "./tasks";
+import { UndoService } from "./undo";
 import { registerChat, type Notify } from "./chat";
 import { RpcError, RpcServer } from "./rpc";
 
@@ -19,6 +23,10 @@ export interface AppOptions {
   /** Ouvre une URL dans le navigateur système (injecté par le sidecar). */
   openUrl?: (url: string) => void | Promise<void>;
   sleep?: (ms: number) => Promise<void>;
+  /** Pour les tests : horloge et minuteries injectables. */
+  now?: () => number;
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (t: unknown) => void;
 }
 
 export function createApp(opts: AppOptions = {}): RpcServer {
@@ -39,6 +47,7 @@ export function createApp(opts: AppOptions = {}): RpcServer {
     if (!profile) throw new RpcError(-32602, "Nom de profil invalide");
     mkdirSync(p.dataDir, { recursive: true });
     db = openDatabase(join(p.dataDir, `${profile}.db`), { key: p.key });
+    agent().configure();
     return { ok: true };
   });
 
@@ -57,6 +66,7 @@ export function createApp(opts: AppOptions = {}): RpcServer {
       JSON.stringify(s),
     );
     audit(d, "user", "settings.update", undefined, { settings: before });
+    agent().configure(); // prend en compte activation, fréquence, autonomie
     return s;
   });
 
@@ -167,6 +177,58 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   rpc.register("calendar.create", (p: any) => cal().create(p));
   rpc.register("calendar.update", (p: any) => cal().update(p.id, p));
   rpc.register("calendar.delete", (p: { id: string }) => (cal().delete(p.id), { ok: true }));
+
+  let tasksSvc: TaskService | null = null;
+  const tasks = () => (tasksSvc ??= new TaskService(need()));
+  let proposalSvc: ProposalService | null = null;
+  const proposals = () => (proposalSvc ??= new ProposalService(need(), cal(), tasks()));
+  let undoSvc: UndoService | null = null;
+  const undo = () => (undoSvc ??= new UndoService(need(), cal(), tasks()));
+  let agentSvc: Agent | null = null;
+  const agent = () =>
+    (agentSvc ??= new Agent({
+      db: need(), settings: loadSettings, router: getRouter, mail: mail(), cal: cal(), tasks: tasks(), proposals: proposals(),
+      notify, now: opts.now, setTimer: opts.setTimer, clearTimer: opts.clearTimer,
+    }));
+
+  rpc.register("tasks.list", (p: { status?: "open" | "done" }) => tasks().list(p ?? {}));
+  rpc.register("tasks.create", (p: any) => tasks().create(p));
+  rpc.register("tasks.update", (p: any) => tasks().update(p.id, p));
+  rpc.register("tasks.setDone", (p: { id: string; done: boolean }) => tasks().setDone(p.id, !!p.done));
+  rpc.register("tasks.delete", (p: { id: string }) => (tasks().delete(p.id), { ok: true }));
+
+  rpc.register("proposals.list", (p: { status?: "pending" | "decided" }) => proposals().list(p?.status ?? "pending"));
+  rpc.register("proposals.count", () => ({ pending: proposals().count() }));
+  rpc.register("proposals.accept", (p: { id: string; edits?: Record<string, unknown> }) => {
+    const r = proposals().accept(p.id, p.edits ?? {});
+    notify("proposals.event", { pending: proposals().count() });
+    return r;
+  });
+  rpc.register("proposals.acceptMany", (p: { ids: string[] }) => {
+    // Validation groupée : une proposition qui échoue n'empêche pas les autres.
+    const out = p.ids.slice(0, 200).map((id) => {
+      try { return { id, ...proposals().accept(id) }; } catch (e) { return { id, error: e instanceof Error ? e.message : String(e) }; }
+    });
+    notify("proposals.event", { pending: proposals().count() });
+    return out;
+  });
+  rpc.register("proposals.reject", (p: { ids: string[] }) => {
+    for (const id of p.ids.slice(0, 200)) proposals().reject(id);
+    notify("proposals.event", { pending: proposals().count() });
+    return { ok: true };
+  });
+
+  rpc.register("actions.list", (p: { limit?: number }) => undo().list(p?.limit ?? 50));
+  rpc.register("actions.undo", (p: { id: number }) => (undo().undo(Number(p.id)), { ok: true }));
+
+  rpc.register("agent.status", () => agent().status());
+  rpc.register("agent.journal", (p: { limit?: number }) => agent().journal(p?.limit ?? 30));
+  rpc.register("agent.runNow", () => {
+    void agent().cycle("manual").catch(() => {});
+    return { started: true };
+  });
+  rpc.register("agent.reanalyze", (p: { mailId: string }) => (agent().reanalyze(p.mailId), { ok: true }));
+  rpc.register("digest.get", (p: { force?: boolean }) => agent().digest(!!p?.force));
 
   rpc.register("mail.list", (p: any) => mail().list(p ?? {}));
   rpc.register("mail.get", (p: { id: string }) => mail().get(p.id));

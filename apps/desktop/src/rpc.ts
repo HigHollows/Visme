@@ -30,3 +30,16 @@ export const TASKS: { id: string; label: string; hint: string }[] = [
   { id: "ocr", label: "OCR (vision)", hint: "modèle avec vision" },
   { id: "stt", label: "Transcription audio", hint: "OpenAI ou compatible" },
 ];
+
+export type Autonomy = "observe" | "propose" | "act_with_approval" | "act_alone";
+export interface AgentSettings {
+  enabled: boolean; autonomy: Autonomy; syncIntervalMinutes: number; eventConfidenceThreshold: number; draftOnly: boolean;
+}
+export interface Proposal {
+  id: string; kind: "event" | "task"; status: string; title: string; reason: string; confidence: number;
+  payload: { title?: string; start?: number; end?: number; allDay?: boolean; location?: string; due?: number | null };
+  sourceRef: { type: string; id: string } | null; createdAt: number; decidedAt: number | null;
+}
+export const CATEGORY_LABEL: Record<string, string> = {
+  important: "Important", to_reply: "À répondre", invoice: "Facture", newsletter: "Newsletter", spam: "Spam", pro: "Pro", perso: "Perso",
+};

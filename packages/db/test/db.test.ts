@@ -22,7 +22,7 @@ describe("db", () => {
     const p = tmp();
     openDatabase(p, { key: "k" }).close();
     const db = openDatabase(p, { key: "k" });
-    expect(db.pragma("user_version", { simple: true })).toBe(6);
+    expect(db.pragma("user_version", { simple: true })).toBe(7);
   });
 
   it("recherche plein texte et vectorielle", () => {

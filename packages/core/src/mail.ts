@@ -118,6 +118,17 @@ export class MailService {
     return true;
   }
 
+  /** Synchronise et attend la fin ; renvoie null si une synchro de ce compte est déjà en cours. */
+  async syncNow(accountId: string) {
+    if (this.syncing.has(accountId)) return null;
+    this.syncing.add(accountId);
+    try {
+      return await this.sync(accountId);
+    } finally {
+      this.syncing.delete(accountId);
+    }
+  }
+
   private upsert(accountId: string, m: MailMessage) {
     this.d.db
       .prepare(

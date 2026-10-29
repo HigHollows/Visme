@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { rpc } from "../rpc";
+import { CATEGORY_LABEL, rpc } from "../rpc";
 
-interface Row { id: string; subject: string; fromName: string; fromAddr: string; date: number; snippet: string; attachmentCount: number }
-interface Full extends Row { toAddrs: string; body: string; attachments: { name: string; size: number }[] }
+interface Row { category: string | null; id: string; subject: string; fromName: string; fromAddr: string; date: number; snippet: string; attachmentCount: number }
+interface Full extends Row { summary: string | null; toAddrs: string; body: string; attachments: { name: string; size: number }[] }
 
 const fmtDate = (t: number) => new Date(t).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
@@ -43,7 +43,7 @@ export function Mails({ selectedId }: { selectedId?: string | null }) {
             <li key={r.id}>
               <button onClick={() => setSel(r.id)} className={`block w-full rounded-md px-3 py-2 text-left ${sel === r.id ? "bg-neutral-100 dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-900"}`}>
                 <div className="flex justify-between gap-2 text-sm"><span className="truncate font-medium">{r.fromName || r.fromAddr}</span><span className="shrink-0 text-xs text-neutral-500">{fmtDate(r.date)}</span></div>
-                <div className="truncate text-sm">{r.subject}{r.attachmentCount > 0 && " 📎"}</div>
+                <div className="truncate text-sm">{r.category && <span className="mr-1 rounded bg-neutral-100 px-1 text-xs dark:bg-neutral-800">{CATEGORY_LABEL[r.category]}</span>}{r.subject}{r.attachmentCount > 0 && " 📎"}</div>
                 <div className="truncate text-xs text-neutral-500">{r.snippet}</div>
               </button>
             </li>
@@ -56,6 +56,12 @@ export function Mails({ selectedId }: { selectedId?: string | null }) {
             <h2 className="text-lg font-medium">{mail.subject}</h2>
             <p className="text-sm text-neutral-500">De {mail.fromName ? `${mail.fromName} <${mail.fromAddr}>` : mail.fromAddr} · {fmtDate(mail.date)}</p>
             <p className="mb-3 text-sm text-neutral-500">À {mail.toAddrs}</p>
+            {(mail.summary || mail.category) && (
+              <div className="mb-3 rounded-md bg-purple-50 p-3 text-sm dark:bg-purple-950/40">
+                <span className="text-xs font-medium text-purple-800 dark:text-purple-300">Analyse de l'IA{mail.category ? ` · ${CATEGORY_LABEL[mail.category]}` : ""}</span>
+                {mail.summary && <p>{mail.summary}</p>}
+              </div>
+            )}
             {/* Texte brut uniquement : pas de HTML distant, pas de pixels espions. */}
             <div className="whitespace-pre-wrap break-words text-sm">{mail.body}</div>
             {mail.attachments.length > 0 && (

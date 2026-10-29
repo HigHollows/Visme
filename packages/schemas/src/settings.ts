@@ -40,6 +40,8 @@ export const settingsSchema = z.object({
     .default({}),
   agent: z
     .object({
+      /** Désactivé par défaut : l'analyse envoie des extraits de mails à l'IA, ce qui exige un accord explicite. */
+      enabled: z.boolean().default(false),
       autonomy: autonomy.default("propose"),
       syncIntervalMinutes: z.number().int().min(1).max(1440).default(15),
       eventConfidenceThreshold: z.number().min(0).max(1).default(0.7),

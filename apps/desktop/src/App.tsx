@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { rpc } from "./rpc";
 import { Chat } from "./pages/Chat";
+import { Home } from "./pages/Home";
+import { Inbox } from "./pages/Inbox";
+import { SettingsAgent } from "./pages/SettingsAgent";
+import { Tasks } from "./pages/Tasks";
 import { CalendarPage } from "./pages/Calendar";
 import { Documents } from "./pages/Documents";
 import { Mails } from "./pages/Mails";
@@ -15,12 +21,24 @@ const SECTIONS = [
 
 export function App() {
   const [active, setActive] = useState<(typeof SECTIONS)[number]>("Accueil");
-  const [settingsTab, setSettingsTab] = useState<"IA" | "Comptes">("Comptes");
+  const [settingsTab, setSettingsTab] = useState<"IA" | "Comptes" | "Agent">("Comptes");
+  const [pending, setPending] = useState(0);
   const [palette, setPalette] = useState(false);
   const [target, setTarget] = useState<{ chat?: string | null; doc?: string | null; mail?: string | null; cal?: number | null }>({});
   const [version, setVersion] = useState<string>("…");
 
   const [autonomy, setAutonomy] = useState<string>("…");
+
+  useEffect(() => {
+    const refresh = () => rpc<{ pending: number }>("proposals.count").then((r) => setPending(r.pending)).catch(() => {});
+    refresh();
+    const un = listen<{ method: string }>("sidecar-event", ({ payload }) => {
+      if (payload.method === "proposals.event" || payload.method === "agent.event") refresh();
+    });
+    return () => void un.then((f) => f());
+  }, []);
+
+  useEffect(() => { invoke("set_badge", { count: pending }).catch(() => {}); }, [pending]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -50,6 +68,7 @@ export function App() {
                 className={`w-full rounded-md px-3 py-1.5 text-left text-sm ${active === s ? "bg-neutral-100 font-medium dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-900"}`}
               >
                 {s}
+                {s === "À valider" && pending > 0 && <span aria-label={`${pending} en attente`} className="ml-2 rounded-full bg-red-600 px-1.5 text-xs text-white">{pending}</span>}
               </button>
             </li>
           ))}
@@ -60,15 +79,21 @@ export function App() {
         {active === "Settings" ? (
           <div className="mt-4">
             <div role="tablist" aria-label="Sections des réglages" className="mb-4 flex gap-2">
-              {(["Comptes", "IA"] as const).map((t) => (
+              {(["Comptes", "IA", "Agent"] as const).map((t) => (
                 <button key={t} role="tab" aria-selected={settingsTab === t} onClick={() => setSettingsTab(t)}
                   className={`rounded-md px-3 py-1 text-sm ${settingsTab === t ? "bg-neutral-100 font-medium dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-900"}`}>{t}</button>
               ))}
             </div>
-            {settingsTab === "IA" ? <SettingsAI /> : <SettingsAccounts />}
+            {settingsTab === "IA" ? <SettingsAI /> : settingsTab === "Agent" ? <SettingsAgent /> : <SettingsAccounts />}
           </div>
         ) : active === "Chat" ? (
           <div className="mt-4"><Chat openId={target.chat} /></div>
+        ) : active === "Accueil" ? (
+          <div className="mt-4"><Home go={(sec) => { setTarget({}); setActive(sec as typeof active); }} onOpenMail={(id) => { setTarget({ mail: id }); setActive("Mails"); }} /></div>
+        ) : active === "À valider" ? (
+          <div className="mt-4"><Inbox onOpenMail={(id) => { setTarget({ mail: id }); setActive("Mails"); }} /></div>
+        ) : active === "Tâches" ? (
+          <div className="mt-4"><Tasks onOpenMail={(id) => { setTarget({ mail: id }); setActive("Mails"); }} /></div>
         ) : active === "Calendrier" ? (
           <div className="mt-4"><CalendarPage openAt={target.cal} /></div>
         ) : active === "Mails" ? (

@@ -191,18 +191,52 @@ export class CalendarService {
     return shape(r);
   }
 
-  create(e: EventInput) {
+  create(e: EventInput, meta?: { aiAdded: true; confidence: number; sourceRef: { type: string; id: string } | null }) {
     const v = validate(e);
-    const id = `local:${randomUUID()}`;
+    const id = `${meta ? "ai" : "local"}:${randomUUID()}`;
     const now = Date.now();
     this.d.db
       .prepare(
-        `INSERT INTO events(id, title, description, location, start_at, end_at, all_day, source, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?, 'local', ?, ?)`,
+        `INSERT INTO events(id, title, description, location, start_at, end_at, all_day, source, source_ref, confidence, ai_added, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
-      .run(id, v.title, v.description, v.location, v.start, v.end, v.allDay, now, now);
-    audit(this.d.db, "user", "event.create", { id, title: v.title }, { delete: id });
+      .run(id, v.title, v.description, v.location, v.start, v.end, v.allDay, meta ? "ai" : "local",
+        meta?.sourceRef ? JSON.stringify(meta.sourceRef) : null, meta?.confidence ?? null, meta ? 1 : 0, now, now);
+    audit(this.d.db, meta ? "ai" : "user", "event.create", { id, title: v.title, sourceRef: meta?.sourceRef }, { delete: id });
     return this.get(id);
+  }
+
+  /** Un événement de même titre démarrant à moins de 2 h existe déjà (ex. invitation déjà dans Google Agenda). */
+  hasSimilar(title: string, start: number) {
+    return !!this.d.db
+      .prepare("SELECT 1 FROM events WHERE lower(title)=? AND ABS(start_at - ?) < 7200000")
+      .get(title.toLowerCase(), start);
+  }
+
+  removeRaw(id: string) {
+    this.d.db.prepare("DELETE FROM events WHERE id=?").run(id);
+  }
+
+  /** Restaure un événement tel qu'il était (annulation d'une modification ou suppression). */
+  restore(e: ReturnType<CalendarService["get"]>) {
+    this.d.db
+      .prepare(
+        `INSERT OR REPLACE INTO events(id, title, description, location, start_at, end_at, all_day, source, source_ref, confidence, ai_added, link, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(e.id, e.title, e.description, e.location, e.start, e.end, e.allDay ? 1 : 0, e.source,
+        e.sourceRef ? JSON.stringify(e.sourceRef) : null, e.confidence, e.aiAdded ? 1 : 0, e.link, Date.now(), Date.now());
+  }
+
+  /** Synchronise sans doublon avec la planification en cours ; renvoie null si une synchro tourne déjà. */
+  async syncNow(accountId: string) {
+    if (this.syncing.has(accountId)) return null;
+    this.syncing.add(accountId);
+    try {
+      return await this.sync(accountId);
+    } finally {
+      this.syncing.delete(accountId);
+    }
   }
 
   private assertLocal(id: string) {
