@@ -8,6 +8,7 @@ import type { Settings } from "@assistant/schemas";
 import { validateObligations, type ObligationSuggestion } from "../agent/analyze";
 import { chunkText } from "./chunk";
 import { MAX_FILE_BYTES, extract, isSupported } from "./extract";
+import { PDF_OCR_PROMPT, SCAN_MIN_CHARS, pdfSubset, planOcr } from "./pdf-ocr";
 
 export interface PipelineDeps {
   db: Db;
@@ -164,10 +165,12 @@ export class DocumentPipeline {
           messages: [{ role: "user", content: OCR_PROMPT, images: [{ mime: ex.mime, data: ex.data.toString("base64") }] }],
         }),
       );
+    } else if (ex.pdf) {
+      text = await this.pdfWithOcr(ex.pdf, router, routes.ocr ? true : false, warnings);
     } else {
       text = ex.text;
     }
-    if (!text.trim()) throw new Error("Aucun texte extrait (PDF scanné ? l'OCR des PDF n'est pas encore pris en charge).");
+    if (!text.trim()) throw new Error("Aucun texte extrait de ce document.");
 
     // 2. Découpage + index plein texte
     const chunks = chunkText(text);
@@ -228,6 +231,41 @@ export class DocumentPipeline {
     }
     this.d.notify("documents.event", { id, status: "ready" });
     try { this.d.onIndexed?.({ id, name: doc.name }); } catch { /* un plugin ne doit jamais faire échouer l'indexation */ }
+  }
+
+  /**
+   * PDF : le texte natif est gardé ; les pages scannées (sans texte) sont lues par un modèle capable de lire les PDF
+   * (Claude, GPT) via la route « OCR », par blocs de 10 pages, 60 pages au plus.
+   */
+  private async pdfWithOcr(pdf: { data: Buffer; pages: string[] }, router: AIRouter | null, hasOcr: boolean, warnings: string[]): Promise<string> {
+    const plan = planOcr(pdf.pages);
+    if (!plan.scanned) return pdf.pages.join("\n\n");
+    const nativeChars = pdf.pages.reduce((n, t) => n + t.trim().length, 0);
+    if (!router || !hasOcr) {
+      if (nativeChars < SCAN_MIN_CHARS) throw new Error("PDF scanné (sans texte) : configurez une route « OCR » avec un modèle Claude ou GPT dans Settings → IA.");
+      warnings.push(`${plan.scanned} page(s) scannée(s) non lues : configurez une route « OCR » pour les indexer.`);
+      return pdf.pages.join("\n\n");
+    }
+    const ocrByStart = new Map<number, string>();
+    for (const run of plan.runs) {
+      const data = await pdfSubset(pdf.data, run);
+      let out = "";
+      try {
+        for await (const c of router.chat("ocr", { maxTokens: 6000, messages: [{ role: "user", content: PDF_OCR_PROMPT, documents: [{ mime: "application/pdf", filename: "scan.pdf", data }] }] })) if (c.type === "text") out += c.text;
+      } catch (e) {
+        throw new Error(`OCR du PDF impossible (le fournisseur doit accepter les PDF : Claude ou GPT) : ${e instanceof Error ? e.message : e}`);
+      }
+      ocrByStart.set(run[0]!, out.trim());
+    }
+    if (plan.skipped) warnings.push(`${plan.skipped} page(s) scannée(s) au-delà de la limite de 60 pages : non lues.`);
+    // Reconstitution dans l'ordre des pages : texte natif, et le résultat de l'OCR à la place de chaque bloc de pages scannées.
+    const parts: string[] = [];
+    const inRun = new Set(plan.runs.flat());
+    pdf.pages.forEach((t, i) => {
+      if (ocrByStart.has(i)) parts.push(ocrByStart.get(i)!);
+      else if (!inRun.has(i)) parts.push(t);
+    });
+    return parts.filter(Boolean).join("\n\n");
   }
 
   private async embedChunks(router: AIRouter, chunks: string[], ids: number[]) {

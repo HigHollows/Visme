@@ -18,7 +18,7 @@ const OFFICE_EXT = new Set([".pdf", ".docx", ".xlsx", ".pptx"]);
 export const SUPPORTED_EXTENSIONS = [...TEXT_EXT, ...OFFICE_EXT, ...Object.keys(IMAGE_MIME)];
 
 export type Extracted =
-  | { kind: "text"; text: string }
+  | { kind: "text"; text: string; /** Pour un PDF : texte de chaque page (les pages sans texte sont probablement des scans). */ pdf?: { data: Buffer; pages: string[] } }
   | { kind: "image"; mime: string; data: Buffer };
 
 export function isSupported(name: string) {
@@ -41,11 +41,11 @@ function safeUnzip(buf: Buffer, wanted: (name: string) => boolean) {
   });
 }
 
-async function pdfText(buf: Buffer) {
+async function pdfPages(buf: Buffer): Promise<string[]> {
   const { extractText, getDocumentProxy } = await import("unpdf");
   const pdf = await getDocumentProxy(new Uint8Array(buf));
-  const { text } = await extractText(pdf, { mergePages: true });
-  return text;
+  const { text } = await extractText(pdf, { mergePages: false });
+  return text as string[];
 }
 
 async function docxText(buf: Buffer) {
@@ -93,8 +93,10 @@ export async function extract(name: string, buf: Buffer): Promise<Extracted> {
   if (IMAGE_MIME[ext]) return { kind: "image", mime: IMAGE_MIME[ext]!, data: buf };
   if (TEXT_EXT.has(ext)) return { kind: "text", text: buf.toString("utf8") };
   switch (ext) {
-    case ".pdf":
-      return { kind: "text", text: await pdfText(buf) };
+    case ".pdf": {
+      const pages = await pdfPages(buf);
+      return { kind: "text", text: pages.join("\n\n"), pdf: { data: buf, pages } };
+    }
     case ".docx":
       return { kind: "text", text: await docxText(buf) };
     case ".xlsx":

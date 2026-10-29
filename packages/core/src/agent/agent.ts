@@ -41,6 +41,7 @@ export interface RunStats {
   autoEvents: number;
   autoTasks: number;
   autoDeadlines: number;
+  attachments: number;
   alerts: number;
   proposed: number;
   skippedSenders: number;
@@ -57,6 +58,7 @@ export function summarize(s: RunStats): string {
   if (s.autoTasks) parts.push(`créé ${plural(s.autoTasks, "tâche")}`);
   if (s.autoDeadlines) parts.push(`enregistré ${plural(s.autoDeadlines, "échéance")}`);
   if (s.alerts) parts.push(`${plural(s.alerts, "alerte")} d'échéance`);
+  if (s.attachments) parts.push(`indexé ${plural(s.attachments, "pièce jointe")}`);
   if (s.proposed) parts.push(`${plural(s.proposed, "suggestion")} à valider`);
   if (s.failed) parts.push(`${plural(s.failed, "mail", "mails")} non analysé${s.failed > 1 ? "s" : ""}`);
   const head = parts.length ? `J'ai ${parts.join(", ")}.` : "Rien de nouveau.";
@@ -134,7 +136,7 @@ export class Agent {
     if (this.running) return null;
     if (trigger === "schedule" && !this.d.settings().agent.enabled) return null;
     this.running = true;
-    const stats: RunStats = { synced: 0, analyzed: 0, autoEvents: 0, autoTasks: 0, autoDeadlines: 0, alerts: 0, proposed: 0, skippedSenders: 0, failed: 0 };
+    const stats: RunStats = { synced: 0, analyzed: 0, autoEvents: 0, autoTasks: 0, autoDeadlines: 0, attachments: 0, alerts: 0, proposed: 0, skippedSenders: 0, failed: 0 };
     const runId = Number(
       this.d.db.prepare("INSERT INTO agent_runs(started_at, trigger) VALUES (?,?)").run(this.now(), trigger).lastInsertRowid,
     );
@@ -223,6 +225,11 @@ export class Agent {
     this.d.db
       .prepare("UPDATE mails SET category=?, summary=?, analyzed_at=?, analysis_error=NULL WHERE id=?")
       .run(analysis.category, analysis.summary || null, now, mail.id);
+
+    // Pièces jointes : indexées comme documents (leurs échéances/abonnements suivent le même circuit que ceux des mails).
+    if (settings.mail.readAttachments) {
+      try { stats.attachments += (await this.d.mail.importAttachments(mail.id)).imported; } catch { /* un échec de téléchargement ne bloque pas l'analyse */ }
+    }
 
     const { autonomy, eventConfidenceThreshold: threshold } = settings.agent;
     if (autonomy === "observe") return;

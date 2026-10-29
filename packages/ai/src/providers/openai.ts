@@ -30,11 +30,12 @@ function toOpenAIMessages(messages: ChatMessage[]) {
           function: { name: c.name, arguments: JSON.stringify(c.args) },
         })),
       };
-    if (m.images?.length)
+    if (m.images?.length || m.documents?.length)
       return {
         role: m.role,
         content: [
-          ...m.images.map((i) => ({ type: "image_url", image_url: { url: `data:${i.mime};base64,${i.data}` } })),
+          ...(m.documents ?? []).map((d) => ({ type: "file", file: { filename: d.filename ?? "document.pdf", file_data: `data:${d.mime};base64,${d.data}` } })),
+          ...(m.images ?? []).map((i) => ({ type: "image_url", image_url: { url: `data:${i.mime};base64,${i.data}` } })),
           { type: "text", text: m.content },
         ],
       };

@@ -166,3 +166,22 @@ describe("transcription", () => {
     await expect(bad.transcribe(new Uint8Array([1]), { model: "whisper-1" })).rejects.toMatchObject({ kind: "rate_limit" });
   });
 });
+
+describe("documents PDF (OCR des scans)", () => {
+  const pdf = { mime: "application/pdf", filename: "scan.pdf", data: "JVBERi0=" };
+  it("Anthropic : bloc document base64 avant le texte", async () => {
+    let body: any;
+    const p = new AnthropicProvider({ apiKey: "k", fetch: (async (_u: string, i: RequestInit) => { body = JSON.parse(i.body as string); return sse([]); }) as never });
+    await collect(p.chat({ model: "m", messages: [{ role: "user", content: "transcris", documents: [pdf] }] }));
+    expect(body.messages[0].content).toEqual([
+      { type: "document", source: { type: "base64", media_type: "application/pdf", data: "JVBERi0=" } },
+      { type: "text", text: "transcris" },
+    ]);
+  });
+  it("OpenAI : pièce « file » en data URL", async () => {
+    let body: any;
+    const p = new OpenAIProvider({ apiKey: "k", fetch: (async (_u: string, i: RequestInit) => { body = JSON.parse(i.body as string); return sse([], true); }) as never });
+    await collect(p.chat({ model: "m", messages: [{ role: "user", content: "transcris", documents: [pdf] }] }));
+    expect(body.messages[0].content[0]).toEqual({ type: "file", file: { filename: "scan.pdf", file_data: "data:application/pdf;base64,JVBERi0=" } });
+  });
+});

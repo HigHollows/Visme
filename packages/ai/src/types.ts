@@ -6,9 +6,19 @@ export interface ImagePart {
   data: string;
 }
 
+/** Document joint (PDF) lu nativement par le modèle : sert à l'OCR des PDF scannés. */
+export interface DocumentPart {
+  mime: string;
+  filename?: string;
+  /** Base64 sans préfixe data: */
+  data: string;
+}
+
 export interface ChatMessage {
   role: Role;
   content: string;
+  /** Documents joints (PDF), pour role "user". */
+  documents?: DocumentPart[];
   /** Images jointes (vision / OCR), pour role "user". */
   images?: ImagePart[];
   /** Pour role "tool" : l'appel auquel ce message répond. */
