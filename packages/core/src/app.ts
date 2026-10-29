@@ -7,6 +7,8 @@ import { buildProviders, buildRouter, usageTotals } from "./ai";
 import { DocumentPipeline } from "./documents/pipeline";
 import { Agent } from "./agent/agent";
 import { CalendarService } from "./calendar";
+import { handleObligations } from "./agent/obligations";
+import { DeadlineService } from "./deadlines";
 import type { Feature } from "./google";
 import { MailService } from "./mail";
 import { MemoryService } from "./memory";
@@ -105,7 +107,18 @@ export function createApp(opts: AppOptions = {}): RpcServer {
     return Object.keys(providers).length ? buildRouter(need(), settings, providers) : null;
   };
   let pipeline: DocumentPipeline | null = null;
-  const docs = () => (pipeline ??= new DocumentPipeline({ db: need(), settings: loadSettings, router: getRouter, notify }));
+  const docs = () =>
+    (pipeline ??= new DocumentPipeline({
+      db: need(), settings: loadSettings, router: getRouter, notify,
+      onObligations: (doc, obligations) => {
+        const a = loadSettings().agent;
+        handleObligations(
+          { db: need(), deadlines: deadlines(), proposals: proposals(), autonomy: a.autonomy, threshold: a.eventConfidenceThreshold },
+          obligations, { ref: { type: "document", id: doc.id }, key: null, label: `Document « ${doc.name} »` },
+        );
+        notify("proposals.event", { pending: proposals().count() });
+      },
+    }));
 
   const parseDoc = (r: any) => ({
     ...r,
@@ -182,14 +195,16 @@ export function createApp(opts: AppOptions = {}): RpcServer {
 
   let tasksSvc: TaskService | null = null;
   const tasks = () => (tasksSvc ??= new TaskService(need()));
+  let deadlineSvc: DeadlineService | null = null;
+  const deadlines = () => (deadlineSvc ??= new DeadlineService(need(), cal(), tasks()));
   let proposalSvc: ProposalService | null = null;
-  const proposals = () => (proposalSvc ??= new ProposalService(need(), cal(), tasks()));
+  const proposals = () => (proposalSvc ??= new ProposalService(need(), cal(), tasks(), deadlines()));
   let undoSvc: UndoService | null = null;
   const undo = () => (undoSvc ??= new UndoService(need(), cal(), tasks()));
   let agentSvc: Agent | null = null;
   const agent = () =>
     (agentSvc ??= new Agent({
-      db: need(), settings: loadSettings, router: getRouter, mail: mail(), cal: cal(), tasks: tasks(), proposals: proposals(),
+      db: need(), settings: loadSettings, router: getRouter, mail: mail(), cal: cal(), tasks: tasks(), proposals: proposals(), deadlines: deadlines(), memory: memory(),
       notify, now: opts.now, setTimer: opts.setTimer, clearTimer: opts.clearTimer,
     }));
 
@@ -220,6 +235,18 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   rpc.register("memory.deleteEdge", (p: { src: string; dst: string; rel: string }) => (memory().deleteEdge(p.src, p.dst, p.rel), { ok: true }));
   rpc.register("memory.forget", (p: { id: string }) => (memory().forget(p.id), { ok: true }));
   rpc.register("memory.clear", () => (memory().clearAll(), { ok: true }));
+
+  rpc.register("deadlines.list", (p: { status?: "active" | "cancelled" | "paid" }) => deadlines().list(p?.status));
+  rpc.register("deadlines.summary", () => ({ ...deadlines().summary(), upcoming: deadlines().upcoming(Math.max(...loadSettings().deadlines.alertDays, 30)) }));
+  rpc.register("deadlines.create", (p: any) => deadlines().create(p));
+  rpc.register("deadlines.update", (p: any) => deadlines().update(p.id, p));
+  rpc.register("deadlines.setStatus", (p: { id: string; status: "active" | "cancelled" | "paid" }) => (deadlines().setStatus(p.id, p.status), { ok: true }));
+  rpc.register("deadlines.delete", (p: { id: string }) => (deadlines().delete(p.id), { ok: true }));
+  rpc.register("deadlines.checkAlerts", () => {
+    const alerts = deadlines().fireAlerts(loadSettings().deadlines.alertDays);
+    for (const a of alerts) notify("deadline.alert", a);
+    return alerts;
+  });
 
   rpc.register("tasks.list", (p: { status?: "open" | "done" }) => tasks().list(p ?? {}));
   rpc.register("tasks.create", (p: any) => tasks().create(p));

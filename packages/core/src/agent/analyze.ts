@@ -30,11 +30,53 @@ export interface TaskSuggestion {
   evidence: string;
 }
 
+export interface ObligationSuggestion {
+  service: string;
+  kind: "invoice" | "subscription" | "contract" | "renewal" | "warranty" | "tax" | "insurance" | "other";
+  amount: number | null;
+  currency: string;
+  periodicity: "weekly" | "monthly" | "quarterly" | "yearly" | "one_off";
+  nextDate: number | null;
+  cancelBy: number | null;
+  confidence: number;
+  evidenceFound: boolean;
+  evidence: string;
+}
+
 export interface Analysis {
   category: Category | null;
   summary: string;
   events: EventSuggestion[];
   tasks: TaskSuggestion[];
+  obligations: ObligationSuggestion[];
+}
+
+const OBLIGATION_KINDS = ["invoice", "subscription", "contract", "renewal", "warranty", "tax", "insurance", "other"];
+const PERIODICITIES = ["weekly", "monthly", "quarterly", "yearly", "one_off"];
+
+/** Valide les échéances/abonnements extraits (mails ou documents). */
+export function validateObligations(raw: unknown, body: string, now: number): ObligationSuggestion[] {
+  const out: ObligationSuggestion[] = [];
+  for (const o of Array.isArray(raw) ? raw.slice(0, MAX_ITEMS) : []) {
+    const service = typeof o?.service === "string" ? o.service.replace(/\s+/g, " ").trim().slice(0, 120) : "";
+    const kind = OBLIGATION_KINDS.includes(o?.kind) ? o.kind : "other";
+    if (!service) continue;
+    const nextDate = o?.nextDate ? parseLocalDateTime(o.nextDate)?.t ?? null : null;
+    const cancelBy = o?.cancelBy ? parseLocalDateTime(o.cancelBy)?.t ?? null : null;
+    // Une échéance dépassée de plus d'un mois n'est plus utile ; au-delà de 5 ans elle est suspecte.
+    const ok = (t: number | null) => t === null || (t >= now - 30 * 86_400_000 && t <= now + 5 * 365 * 86_400_000);
+    if (!ok(nextDate) || !ok(cancelBy) || (nextDate === null && cancelBy === null)) continue;
+    if (nextDate !== null && cancelBy !== null && cancelBy > nextDate) continue;
+    const amount = typeof o?.amount === "number" && Number.isFinite(o.amount) && o.amount >= 0 && o.amount < 1e7 ? Math.round(o.amount * 100) / 100 : null;
+    const evidence = str(o?.evidence, 300);
+    const found = evidenceInBody(evidence, body);
+    out.push({
+      service, kind, amount, currency: typeof o?.currency === "string" && /^[A-Za-z]{3}$/.test(o.currency) ? o.currency.toUpperCase() : "EUR",
+      periodicity: PERIODICITIES.includes(o?.periodicity) ? o.periodicity : "one_off",
+      nextDate, cancelBy, confidence: clamp01(o?.confidence) * (found ? 1 : 0.5), evidenceFound: found, evidence,
+    });
+  }
+  return out;
 }
 
 const MAX_BODY_FOR_AI = 4000;
@@ -47,12 +89,14 @@ Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
  "category": "important|to_reply|invoice|newsletter|spam|pro|perso",
  "summary": "1 à 2 phrases, dans la langue du mail",
  "events": [{"title": "...", "start": "YYYY-MM-DDTHH:mm", "end": "YYYY-MM-DDTHH:mm ou null", "allDay": false, "location": "", "confidence": 0.0, "evidence": "extrait EXACT et court du mail qui justifie cet événement"}],
- "tasks": [{"title": "action à faire par le destinataire", "due": "YYYY-MM-DD ou null", "confidence": 0.0, "evidence": "extrait EXACT du mail"}]
+ "tasks": [{"title": "action à faire par le destinataire", "due": "YYYY-MM-DD ou null", "confidence": 0.0, "evidence": "extrait EXACT du mail"}],
+ "obligations": [{"service": "nom du fournisseur", "kind": "invoice|subscription|contract|renewal|warranty|tax|insurance|other", "amount": 0.0, "currency": "EUR", "periodicity": "weekly|monthly|quarterly|yearly|one_off", "nextDate": "YYYY-MM-DD (prochaine échéance ou date de paiement)", "cancelBy": "YYYY-MM-DD ou null (date limite de résiliation)", "confidence": 0.0, "evidence": "extrait EXACT du mail"}]
 }
 Règles :
 - N'ajoute un événement que pour un rendez-vous, une échéance ou une date précise explicitement mentionnés. N'invente rien : en cas de doute, ne l'ajoute pas ou mets une confiance basse.
 - Les heures sont en heure locale du destinataire. Résous les dates relatives ("vendredi", "demain") à partir de la date d'envoi du mail fournie.
 - "tasks" : seulement ce que le destinataire doit faire (ex. « peux-tu m'envoyer… »). Pas les newsletters ni les promotions.
+- "obligations" : factures à payer, abonnements, contrats, renouvellements, garanties, impôts, assurances, avec montant et dates SEULEMENT s'ils sont écrits. Sinon tableau vide.
 - confidence : 0.9+ si la date et l'objet sont explicites, 0.5 si ambigus.`;
 
 export function buildAnalysisPrompt(m: MailForAnalysis, nowIso: string, tz: string, refusals: string[]): string {
@@ -157,7 +201,7 @@ export function validateAnalysis(raw: unknown, mail: MailForAnalysis, now: numbe
     tasks.push({ title, due, confidence: clamp01(t?.confidence) * (found ? 1 : 0.5), evidence, evidenceFound: found });
   }
 
-  return { category, summary: str(j.summary, 600), events, tasks };
+  return { category, summary: str(j.summary, 600), events, tasks, obligations: validateObligations(j.obligations, mail.body, now) };
 }
 
 export type Autonomy = "observe" | "propose" | "act_with_approval" | "act_alone";
@@ -171,7 +215,7 @@ export type Autonomy = "observe" | "propose" | "act_with_approval" | "act_alone"
  * Dans tous les cas, une suggestion sans extrait vérifiable ou sous le seuil passe par « À valider ».
  */
 export function decide(
-  kind: "event" | "task",
+  kind: "event" | "task" | "deadline",
   s: { confidence: number; evidenceFound: boolean },
   autonomy: Autonomy,
   threshold: number,
@@ -179,6 +223,7 @@ export function decide(
   if (autonomy === "observe") return "skip";
   const reliable = s.confidence >= threshold && s.evidenceFound;
   if (autonomy === "act_alone" && reliable) return "auto";
+  // Les échéances touchent à l'argent : jamais ajoutées seules en dehors du niveau le plus élevé.
   if (autonomy === "act_with_approval" && reliable && kind === "event") return "auto";
   return "propose";
 }

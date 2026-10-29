@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { audit, type Db } from "@assistant/db";
 import type { CalendarService } from "./calendar";
+import type { DeadlineService } from "./deadlines";
 import type { TaskService } from "./tasks";
 
 export type SourceRef = { type: string; id: string } | null;
 
 export interface NewProposal {
-  kind: "event" | "task";
+  kind: "event" | "task" | "deadline";
   title: string;
   payload: Record<string, unknown>;
   reason: string;
@@ -26,7 +27,7 @@ function shape(r: any) {
 const normTitle = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 
 export function dedupeKey(p: Pick<NewProposal, "kind" | "title" | "payload" | "sourceRef">) {
-  const when = String((p.payload.start ?? p.payload.due ?? "") as string | number);
+  const when = String((p.payload.start ?? p.payload.due ?? p.payload.nextDate ?? "") as string | number);
   return createHash("sha1")
     .update([p.kind, normTitle(p.title), when.slice(0, 16), p.sourceRef?.id ?? ""].join("|"))
     .digest("hex");
@@ -37,6 +38,7 @@ export class ProposalService {
     private db: Db,
     private cal: CalendarService,
     private tasks: TaskService,
+    private deadlines: DeadlineService,
   ) {}
 
   /** Crée une proposition ; renvoie null si elle existe déjà (même mail, même objet), y compris déjà refusée. */
@@ -85,6 +87,16 @@ export class ProposalService {
         { aiAdded: true, confidence: p.confidence, sourceRef: p.sourceRef },
       );
       resultRef = ev.id;
+    } else if (p.kind === "deadline") {
+      const meta = { aiAdded: true, confidence: p.confidence, sourceRef: p.sourceRef };
+      const input = {
+        service: String(d.service), kind: d.kind, amount: d.amount ?? null, currency: d.currency, periodicity: d.periodicity,
+        nextDate: d.nextDate ?? null, cancelBy: d.cancelBy ?? null,
+      };
+      if (d.updateId) {
+        const cur = this.deadlines.get(String(d.updateId));
+        resultRef = this.deadlines.update(cur.id, { ...input, notes: cur.notes }, meta).id;
+      } else resultRef = this.deadlines.create(input, meta).id;
     } else {
       const t = this.tasks.create(
         { title: d.title ?? p.title, due: d.due ?? null, notes: d.notes, priority: d.priority },

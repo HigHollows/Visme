@@ -2,6 +2,9 @@ import { AIError, type AIRouter } from "@assistant/ai";
 import { audit, type Db } from "@assistant/db";
 import type { Settings } from "@assistant/schemas";
 import type { CalendarService } from "../calendar";
+import type { DeadlineService } from "../deadlines";
+import type { MemoryService } from "../memory";
+import { handleObligations } from "./obligations";
 import { GoogleAuth } from "../google";
 import type { MailService } from "../mail";
 import type { ProposalService } from "../proposals";
@@ -22,6 +25,8 @@ export interface AgentDeps {
   cal: CalendarService;
   tasks: TaskService;
   proposals: ProposalService;
+  deadlines: DeadlineService;
+  memory: MemoryService;
   notify: (method: string, params: unknown) => void;
   now?: () => number;
   /** Injectables pour les tests. */
@@ -34,6 +39,8 @@ export interface RunStats {
   analyzed: number;
   autoEvents: number;
   autoTasks: number;
+  autoDeadlines: number;
+  alerts: number;
   proposed: number;
   skippedSenders: number;
   failed: number;
@@ -47,6 +54,8 @@ export function summarize(s: RunStats): string {
   if (s.analyzed) parts.push(`trié ${plural(s.analyzed, "mail")}`);
   if (s.autoEvents) parts.push(`ajouté ${plural(s.autoEvents, "événement")}`);
   if (s.autoTasks) parts.push(`créé ${plural(s.autoTasks, "tâche")}`);
+  if (s.autoDeadlines) parts.push(`enregistré ${plural(s.autoDeadlines, "échéance")}`);
+  if (s.alerts) parts.push(`${plural(s.alerts, "alerte")} d'échéance`);
   if (s.proposed) parts.push(`${plural(s.proposed, "suggestion")} à valider`);
   if (s.failed) parts.push(`${plural(s.failed, "mail", "mails")} non analysé${s.failed > 1 ? "s" : ""}`);
   const head = parts.length ? `J'ai ${parts.join(", ")}.` : "Rien de nouveau.";
@@ -124,7 +133,7 @@ export class Agent {
     if (this.running) return null;
     if (trigger === "schedule" && !this.d.settings().agent.enabled) return null;
     this.running = true;
-    const stats: RunStats = { synced: 0, analyzed: 0, autoEvents: 0, autoTasks: 0, proposed: 0, skippedSenders: 0, failed: 0 };
+    const stats: RunStats = { synced: 0, analyzed: 0, autoEvents: 0, autoTasks: 0, autoDeadlines: 0, alerts: 0, proposed: 0, skippedSenders: 0, failed: 0 };
     const runId = Number(
       this.d.db.prepare("INSERT INTO agent_runs(started_at, trigger) VALUES (?,?)").run(this.now(), trigger).lastInsertRowid,
     );
@@ -133,6 +142,8 @@ export class Agent {
     try {
       await this.syncAccounts(stats);
       await this.analyzeMails(stats);
+      this.fireDeadlineAlerts(stats);
+      try { this.d.memory.rebuild(); } catch { /* la mémoire se reconstruit à la demande */ }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -247,7 +258,19 @@ export class Agent {
         stats.autoTasks++;
       } else if (verdict === "propose" && this.d.proposals.create(prop)) stats.proposed++;
     }
+    const ob = handleObligations(
+      { db: this.d.db, deadlines: this.d.deadlines, proposals: this.d.proposals, autonomy, threshold },
+      analysis.obligations, { ref: sourceRef, key: mail.fromAddr, label: reason("").replace(/ — « »$/, "") },
+    );
+    stats.autoDeadlines += ob.auto;
+    stats.proposed += ob.proposed;
     audit(this.d.db, "ai", "mail.analyze", { mailId: mail.id, category: analysis.category, events: analysis.events.length, tasks: analysis.tasks.length });
+  }
+
+  private fireDeadlineAlerts(stats: RunStats) {
+    const alerts = this.d.deadlines.fireAlerts(this.d.settings().deadlines.alertDays, this.now());
+    for (const a of alerts) this.d.notify("deadline.alert", a);
+    stats.alerts += alerts.length;
   }
 
   /** Remet un mail en file d'analyse (après une erreur ou un changement de modèle). */

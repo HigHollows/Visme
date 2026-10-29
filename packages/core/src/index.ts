@@ -10,3 +10,8 @@ export * from "./mail";
 export * from "./google";
 export * from "./calendar";
 export * from "./memory";
+export * from "./deadlines";
+export * from "./tasks";
+export * from "./proposals";
+export * from "./presets";
+export * from "./retrieval";
