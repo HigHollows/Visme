@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 const SECTIONS = [
@@ -10,7 +10,14 @@ export function App() {
   const [active, setActive] = useState<(typeof SECTIONS)[number]>("Accueil");
   const [version, setVersion] = useState<string>("…");
 
-  invoke<string>("app_version").then(setVersion).catch(() => setVersion("web"));
+  const [autonomy, setAutonomy] = useState<string>("…");
+
+  useEffect(() => {
+    invoke<string>("app_version").then(setVersion).catch(() => setVersion("web"));
+    invoke<{ agent: { autonomy: string } }>("rpc", { method: "settings.get" })
+      .then((s) => setAutonomy(s.agent.autonomy))
+      .catch((e) => setAutonomy(`erreur : ${e}`));
+  }, []);
 
   return (
     <div className="flex h-screen bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
@@ -33,6 +40,7 @@ export function App() {
       <main className="flex-1 p-8">
         <h1 className="text-2xl font-semibold">{active}</h1>
         <p className="mt-2 text-sm text-neutral-500">Version {version} — section en construction.</p>
+        <p className="mt-1 text-sm text-neutral-500">Autonomie (via sidecar + base chiffrée) : {autonomy}</p>
       </main>
     </div>
   );
