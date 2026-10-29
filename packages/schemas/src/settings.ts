@@ -1,0 +1,78 @@
+import { z } from "zod";
+
+export const SETTINGS_VERSION = 2;
+
+const route = z.object({ provider: z.string(), model: z.string() });
+const taskRoute = z.object({ primary: route, fallback: route.optional() });
+
+export const autonomy = z.enum(["observe", "propose", "act_with_approval", "act_alone"]);
+
+export const settingsSchema = z.object({
+  version: z.literal(SETTINGS_VERSION),
+  general: z
+    .object({
+      language: z.enum(["fr", "en"]).default("fr"),
+      theme: z.enum(["system", "light", "dark"]).default("system"),
+      launchAtLogin: z.boolean().default(false),
+    })
+    .default({}),
+  ai: z
+    .object({
+      /** Les clés API ne sont JAMAIS ici : elles vivent dans le trousseau système. */
+      providers: z
+        .record(
+          z.object({
+            kind: z.enum(["anthropic", "openai", "openai_compatible"]),
+            baseUrl: z.string().url().optional(),
+          }),
+        )
+        .default({}),
+      routes: z.record(taskRoute).default({}),
+      redactSensitive: z.boolean().default(true),
+      economyMode: z.boolean().default(false),
+      limits: z
+        .object({
+          dailyUsd: z.number().positive().optional(),
+          monthlyUsd: z.number().positive().optional(),
+        })
+        .default({}),
+    })
+    .default({}),
+  agent: z
+    .object({
+      autonomy: autonomy.default("propose"),
+      syncIntervalMinutes: z.number().int().min(1).max(1440).default(15),
+      eventConfidenceThreshold: z.number().min(0).max(1).default(0.7),
+      draftOnly: z.boolean().default(true),
+    })
+    .default({}),
+});
+
+export type Settings = z.infer<typeof settingsSchema>;
+
+/** Migre un JSON de n'importe quelle version antérieure vers la version courante. */
+export function migrateSettings(raw: unknown): Settings {
+  const obj = (typeof raw === "object" && raw ? { ...(raw as Record<string, unknown>) } : {}) as Record<
+    string,
+    unknown
+  >;
+  let v = typeof obj.version === "number" ? obj.version : 1;
+  if (v > SETTINGS_VERSION) throw new Error(`Settings v${v} plus récents que l'application`);
+  if (v === 1) {
+    // v1 : "ai.dailyLimit" à plat → "ai.limits.dailyUsd"
+    const ai = { ...((obj.ai as Record<string, unknown>) ?? {}) };
+    if (typeof ai.dailyLimit === "number") {
+      ai.limits = { ...(ai.limits as object), dailyUsd: ai.dailyLimit };
+      delete ai.dailyLimit;
+    }
+    obj.ai = ai;
+    v = 2;
+  }
+  return settingsSchema.parse({ ...obj, version: v });
+}
+
+/** Export JSON : tout champ ressemblant à un secret est retiré. */
+export function exportSettings(s: Settings): string {
+  const strip = (k: string, v: unknown) => (/key|secret|token|password/i.test(k) ? undefined : v);
+  return JSON.stringify(s, strip, 2);
+}
