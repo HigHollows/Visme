@@ -20,6 +20,7 @@ const MIME_EXT: Record<string, string> = {
   "audio/mpeg": "mp3", "audio/wav": "wav", "audio/x-wav": "wav", "audio/flac": "flac",
 };
 const ID_RE = /^[0-9a-f-]{36}$/;
+const SYSTEM_IDX_BASE = 100_000;
 
 export interface MeetingDeps {
   db: Db;
@@ -101,7 +102,7 @@ export class MeetingService {
   }
 
   /** Reçoit un segment audio complet (fichier autonome, quelques minutes). Il est écrit sur disque tout de suite : un crash ne perd que le segment en cours. */
-  addSegment(p: { id: string; idx: number; offsetMs: number; durationMs: number; mime: string; data: string }) {
+  addSegment(p: { id: string; idx: number; offsetMs: number; durationMs: number; mime: string; data: string; track?: "mic" | "system" }) {
     const r = this.row(p.id);
     if (r.status !== "recording") throw new Error("Cette réunion n'est plus en cours d'enregistrement");
     const ext = MIME_EXT[String(p.mime).split(";")[0]!.trim().toLowerCase()];
@@ -109,12 +110,14 @@ export class MeetingService {
     const bytes = Buffer.from(String(p.data), "base64");
     if (!bytes.length) throw new Error("Segment vide");
     if (bytes.length > MAX_AUDIO_BYTES) throw new Error("Segment trop volumineux (25 Mo max)");
-    const idx = Math.max(0, Math.trunc(p.idx));
-    const file = join(this.dir(p.id), `seg-${String(idx).padStart(4, "0")}.${ext}`);
+    const track = p.track === "system" ? "system" : "mic";
+    // Les deux pistes (micro, audio du système) partagent la table : l'index de la piste « système » est décalé.
+    const idx = Math.max(0, Math.trunc(p.idx)) + (track === "system" ? SYSTEM_IDX_BASE : 0);
+    const file = join(this.dir(p.id), `${track === "system" ? "sys" : "seg"}-${String(idx).padStart(6, "0")}.${ext}`);
     writeFileSync(file, bytes);
     this.d.db
-      .prepare("INSERT INTO meeting_segments(meeting_id, idx, offset_ms, duration_ms, file, mime) VALUES (?,?,?,?,?,?) ON CONFLICT(meeting_id, idx) DO UPDATE SET file=excluded.file, mime=excluded.mime, offset_ms=excluded.offset_ms, duration_ms=excluded.duration_ms, status='pending', error=NULL, result=NULL")
-      .run(p.id, idx, Math.max(0, Math.trunc(p.offsetMs)), Math.max(0, Math.trunc(p.durationMs)), file, p.mime);
+      .prepare("INSERT INTO meeting_segments(meeting_id, idx, offset_ms, duration_ms, file, mime, track) VALUES (?,?,?,?,?,?,?) ON CONFLICT(meeting_id, idx) DO UPDATE SET file=excluded.file, mime=excluded.mime, offset_ms=excluded.offset_ms, duration_ms=excluded.duration_ms, track=excluded.track, status='pending', error=NULL, result=NULL")
+      .run(p.id, idx, Math.max(0, Math.trunc(p.offsetMs)), Math.max(0, Math.trunc(p.durationMs)), file, p.mime, track);
     return { ok: true };
   }
 
@@ -230,14 +233,19 @@ export class MeetingService {
     if (failed) throw new Error(`Transcription incomplète (${failed} segment(s) en erreur). L'audio est conservé : vous pouvez réessayer.`);
 
     // 2. Assemblage du transcript sur la ligne de temps de la réunion.
-    const rows = db.prepare("SELECT offset_ms AS offset, duration_ms AS duration, result FROM meeting_segments WHERE meeting_id=? ORDER BY idx").all(id) as
-      { offset: number; duration: number; result: string }[];
+    const rows = db.prepare("SELECT offset_ms AS offset, duration_ms AS duration, result, track FROM meeting_segments WHERE meeting_id=? ORDER BY idx").all(id) as
+      { offset: number; duration: number; result: string; track: string }[];
+    // Deux pistes : « Vous » (micro) et « Participants » (audio du système) — on sait donc qui parle sans diarisation.
+    const twoTracks = rows.some((r) => r.track === "system");
+    const label = (track: string, speaker?: string) =>
+      !twoTracks ? speaker : track === "system" ? (speaker ? `Participant ${speaker}` : "Participants") : "Vous";
     const transcript: TranscriptSegment[] = [];
     for (const r of rows) {
       const t = JSON.parse(r.result) as { text: string; segments?: { start: number; end: number; speaker?: string; text: string }[] };
-      if (t.segments?.length) for (const s of t.segments) transcript.push({ start: r.offset + s.start * 1000, end: r.offset + s.end * 1000, speaker: s.speaker, text: s.text });
-      else if (t.text.trim()) transcript.push({ start: r.offset, end: r.offset + r.duration, text: t.text.trim() });
+      if (t.segments?.length) for (const s of t.segments) transcript.push({ start: r.offset + s.start * 1000, end: r.offset + s.end * 1000, speaker: label(r.track, s.speaker), text: s.text });
+      else if (t.text.trim()) transcript.push({ start: r.offset, end: r.offset + r.duration, speaker: label(r.track), text: t.text.trim() });
     }
+    transcript.sort((a, b) => a.start - b.start);
     if (!transcript.length) throw new Error("La transcription est vide (aucune parole détectée).");
     db.prepare("UPDATE meetings SET transcript=?, status='processing', updated_at=? WHERE id=?").run(JSON.stringify(transcript), this.now(), id);
     this.emit(id);

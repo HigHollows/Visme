@@ -4,5 +4,7 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>ASSISTANT utilise le micro pour enregistrer vos réunions et vos notes vocales, uniquement quand vous le demandez.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>ASSISTANT peut capter le son de votre ordinateur (par exemple les participants d'une visioconférence) pour transcrire une réunion, uniquement quand vous le demandez.</string>
 </dict>
 </plist>

@@ -248,3 +248,20 @@ describe("minutes (fonctions pures)", () => {
     expect(m.decisions).toEqual(["a"]);
   });
 });
+
+describe("réunion : audio du système + micro", () => {
+  it("deux pistes fusionnées sur la ligne de temps, avec « Vous » et « Participants »", async () => {
+    const t = await setup();
+    t.w.minutes = goodMinutes();
+    TRANSCRIPTS["MIC"] = { text: "Oui je valide le budget." };
+    TRANSCRIPTS["SYS"] = { text: "Pouvez-vous confirmer le budget ?", segments: [{ start: 0, end: 4, speaker: "A", text: "Pouvez-vous confirmer le budget ?" }] };
+    const { result: { id } } = await t.call("meetings.start", { title: "Visio", consent: true });
+    await t.call("meetings.segment", { id, idx: 0, offsetMs: 5000, durationMs: 4000, mime: "audio/webm", data: b64("MIC"), track: "mic" });
+    await t.call("meetings.segment", { id, idx: 0, offsetMs: 1000, durationMs: 4000, mime: "audio/wav", data: b64("SYS"), track: "system" }); // même idx, autre piste
+    await t.call("meetings.finish", { id, durationMs: 10_000 });
+    const m = await t.settled(id);
+    expect(m.status).toBe("ready");
+    expect(m.transcript.map((s: any) => [s.start, s.speaker])).toEqual([[1000, "Participant A"], [5000, "Vous"]]);
+    expect(t.w.sttCalls.map((c) => c.name).sort()).toEqual(["audio.wav", "audio.webm"]);
+  });
+});

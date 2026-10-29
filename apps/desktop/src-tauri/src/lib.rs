@@ -1,5 +1,6 @@
 mod lock;
 mod profiles;
+mod sysaudio;
 mod sidecar;
 
 use lock::{hash_password, verify_password, LockConfig, LockState};
@@ -136,6 +137,67 @@ async fn secret_set(app: tauri::AppHandle, state: State<'_, SidecarState>, reg: 
 }
 
 pub struct ProfileState(pub Mutex<Registry>);
+
+struct ActiveCapture {
+    stopper: sysaudio::Stopper,
+    uploader: std::thread::JoinHandle<()>,
+}
+pub struct SysAudioState(Mutex<Option<ActiveCapture>>);
+
+/// La capture de l'audio du système est-elle possible sur cette machine ?
+#[tauri::command]
+fn system_audio_supported() -> serde_json::Value {
+    match sysaudio::supported() {
+        Ok(()) => serde_json::json!({ "supported": true }),
+        Err(reason) => serde_json::json!({ "supported": false, "reason": reason }),
+    }
+}
+
+/// Démarre la capture de l'audio du système pour une réunion. Les segments WAV partent directement au moteur (piste « system »).
+#[tauri::command]
+fn system_audio_start(state: State<'_, SidecarState>, cap: State<'_, SysAudioState>, meeting_id: String, started_at_ms: u64) -> Result<(), String> {
+    use base64::Engine;
+    if cap.0.lock().unwrap().is_some() {
+        return Err("Capture de l'audio système déjà en cours".into());
+    }
+    sysaudio::supported()?;
+    let sc = state.get()?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let base = now.saturating_sub(started_at_ms);
+    let (tx, rx) = std::sync::mpsc::channel::<sysaudio::Segment>();
+    let uploader = std::thread::spawn(move || {
+        for seg in rx {
+            let data = base64::engine::general_purpose::STANDARD.encode(&seg.wav);
+            let params = serde_json::json!({
+                "id": meeting_id, "idx": seg.index, "offsetMs": seg.offset_ms, "durationMs": seg.duration_ms,
+                "mime": "audio/wav", "data": data, "track": "system",
+            });
+            if let Err(e) = tauri::async_runtime::block_on(sc.call("meetings.segment", params)) {
+                eprintln!("[sysaudio] envoi du segment impossible : {e}");
+            }
+        }
+    });
+    let factory: sysaudio::PipelineFactory = Box::new(move |rate, channels| {
+        sysaudio::Pipeline::new(rate, channels, base, Box::new(move |seg| { let _ = tx.send(seg); }))
+    });
+    match sysaudio::start(factory) {
+        Ok(stopper) => {
+            *cap.0.lock().unwrap() = Some(ActiveCapture { stopper, uploader });
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Arrête la capture et attend l'envoi du dernier segment (à appeler AVANT de terminer la réunion).
+#[tauri::command]
+fn system_audio_stop(cap: State<'_, SysAudioState>) -> Result<(), String> {
+    if let Some(active) = cap.0.lock().unwrap().take() {
+        (active.stopper)();
+        let _ = active.uploader.join();
+    }
+    Ok(())
+}
 
 /// Démarre le moteur pour le profil actif (ouvre la base chiffrée avec sa clé du trousseau) et enregistre le raccourci de capture.
 /// Appelé au lancement, ou après déverrouillage si un mot de passe est défini.
@@ -366,6 +428,7 @@ pub fn run() {
         .manage(ShortcutRegistered(Mutex::new(None)))
         .manage(SidecarState(Mutex::new(None)))
         .manage(LockState::pending())
+        .manage(SysAudioState(Mutex::new(None)))
         .manage(ProfileState(Mutex::new(Registry { current: String::new(), profiles: vec![] })))
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
@@ -420,7 +483,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![app_version, rpc, secret_set, set_badge, lock_status, lock_set_password, lock_disable, lock_now, unlock, erase_all_data, set_capture_shortcut, hide_capture, capture_screen, profiles_list, profile_create, profile_rename, profile_switch, profile_delete, profiles_overview])
+        .invoke_handler(tauri::generate_handler![app_version, rpc, secret_set, set_badge, system_audio_supported, system_audio_start, system_audio_stop, lock_status, lock_set_password, lock_disable, lock_now, unlock, erase_all_data, set_capture_shortcut, hide_capture, capture_screen, profiles_list, profile_create, profile_rename, profile_switch, profile_delete, profiles_overview])
         .build(tauri::generate_context!())
         .expect("erreur au lancement de l'application")
         .run(|app, event| {

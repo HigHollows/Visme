@@ -25,3 +25,7 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-autostart = "2"
 argon2 = "0.5"
+
+# Audio du système (visioconférences) : bouclage WASAPI (Windows) et prise CoreAudio (macOS 14.6+), via cpal.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+cpal = "0.18"
