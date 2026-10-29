@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { CATEGORY_LABEL, rpc } from "../rpc";
 
@@ -24,6 +25,8 @@ export function Home({ go, onOpenMail }: { go: (section: string) => void; onOpen
   const [digest, setDigest] = useState<string | null>(null);
   const [digestMsg, setDigestMsg] = useState("");
   const [err, setErr] = useState("");
+  const [others, setOthers] = useState<null | { id: string; name: string; color: string; overview: { events: { title: string; start: number; allDay: boolean }[]; tasks: { title: string }[]; pendingProposals: number } | null }[]>(null);
+  const [loadingOthers, setLoadingOthers] = useState(false);
 
   const load = useCallback(async () => {
     const d = new Date();
@@ -60,6 +63,12 @@ export function Home({ go, onOpenMail }: { go: (section: string) => void; onOpen
       setDigest(r?.text ?? null);
       setDigestMsg(r ? "" : "Configurez une route « Résumés » dans Settings → IA.");
     } catch (e) { setDigestMsg(String(e)); }
+  };
+
+  const showOthers = async () => {
+    setLoadingOthers(true);
+    try { setOthers(await invoke<NonNullable<typeof others>>("profiles_overview")); } catch (e) { setErr(String(e)); }
+    setLoadingOthers(false);
   };
 
   return (
@@ -121,6 +130,24 @@ export function Home({ go, onOpenMail }: { go: (section: string) => void; onOpen
             </ul>
           </div>
         )}
+      </section>
+      <section className={`${card} md:col-span-2`} aria-labelledby="h-others">
+        <div className="flex items-center gap-2"><h2 id="h-others" className="font-medium">Autres profils (lecture seule)</h2>
+          <button className={`${btn} ml-auto`} disabled={loadingOthers} onClick={showOthers}>{others ? "Actualiser" : loadingOthers ? "Ouverture…" : "Afficher"}</button>
+          {others && <button className={btn} onClick={() => setOthers(null)}>Masquer</button>}</div>
+        {!others && <p className="mt-1 text-xs text-neutral-500">Aperçu du jour de vos autres profils. Les données sont lues sans clé IA ni agent et ne sont jamais envoyées à l'IA.</p>}
+        {others?.map((o) => (
+          <div key={o.id} className="mt-3 text-sm">
+            <h3 className="mb-1 flex items-center gap-2 font-medium"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: o.color }} />{o.name}{o.overview && o.overview.pendingProposals > 0 && <span className="text-xs text-neutral-500">· {o.overview.pendingProposals} à valider</span>}</h3>
+            {!o.overview ? <p className="text-neutral-500">Profil non lisible.</p> : (
+              <ul className="space-y-0.5">
+                {o.overview.events.map((e, i) => <li key={"e" + i}><span className="mr-2 text-neutral-500">{e.allDay ? "journée" : hm(e.start)}</span>{e.title}</li>)}
+                {o.overview.tasks.map((t, i) => <li key={"t" + i}>☐ {t.title}</li>)}
+                {!o.overview.events.length && !o.overview.tasks.length && <li className="text-neutral-500">Rien aujourd'hui.</li>}
+              </ul>
+            )}
+          </div>
+        ))}
       </section>
     </div>
   );

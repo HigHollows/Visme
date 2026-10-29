@@ -7,13 +7,84 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{Manager, State, WindowEvent};
+use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 fn show_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+    }
+}
+
+const DEFAULT_SHORTCUT: &str = "CommandOrControl+Shift+Space";
+
+pub struct ShortcutRegistered(pub Mutex<Option<Shortcut>>);
+
+/// Affiche (ou masque) la petite fenêtre de capture rapide, même si la fenêtre principale est cachée.
+fn toggle_capture(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+    let Some(w) = app.get_webview_window("capture") else { return };
+    if w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false) {
+        let _ = w.hide();
+    } else {
+        let _ = w.center();
+        let _ = w.show();
+        let _ = w.set_focus();
+        let _ = w.emit("capture-open", ());
+    }
+}
+
+/// Enregistre le raccourci global (remplace l'ancien). Renvoie une erreur lisible si la syntaxe ou le raccourci est invalide.
+fn register_shortcut(app: &tauri::AppHandle, accel: &str) -> Result<(), String> {
+    let sc: Shortcut = accel.parse().map_err(|_| format!("Raccourci invalide : « {accel} »"))?;
+    let state = app.state::<ShortcutRegistered>();
+    let gs = app.global_shortcut();
+    if let Some(old) = state.0.lock().unwrap().take() {
+        let _ = gs.unregister(old);
+    }
+    gs.register(sc).map_err(|e| format!("Raccourci indisponible (déjà utilisé ?) : {e}"))?;
+    *state.0.lock().unwrap() = Some(sc);
+    Ok(())
+}
+
+#[tauri::command]
+fn set_capture_shortcut(app: tauri::AppHandle, accelerator: String) -> Result<(), String> {
+    register_shortcut(&app, &accelerator)
+}
+
+#[tauri::command]
+fn hide_capture(app: tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("capture") {
+        let _ = w.hide();
+    }
+}
+
+/// Capture d'écran interactive (macOS) : l'utilisateur sélectionne une zone ; l'image PNG est renvoyée en base64.
+#[tauri::command]
+async fn capture_screen(app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        use base64::Engine;
+        let capture = app.get_webview_window("capture");
+        if let Some(w) = &capture { let _ = w.hide(); } // pour qu'elle n'apparaisse pas sur l'image
+        let tmp = std::env::temp_dir().join(format!("assistant-shot-{}.png", std::process::id()));
+        let path = tmp.clone();
+        let status = tauri::async_runtime::spawn_blocking(move || std::process::Command::new("screencapture").args(["-i", "-x"]).arg(&path).status())
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string());
+        if let Some(w) = &capture { let _ = w.show(); let _ = w.set_focus(); }
+        status?;
+        let bytes = std::fs::read(&tmp).map_err(|_| "Capture annulée (ou autorisation « Enregistrement de l'écran » manquante dans Réglages Système)".to_string())?;
+        let _ = std::fs::remove_file(&tmp);
+        Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("La capture d'écran intégrée n'est disponible que sur macOS : faites une capture (Win+Maj+S) puis collez-la (Ctrl+V).".into())
     }
 }
 
@@ -175,6 +246,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        toggle_capture(app);
+                    }
+                })
+                .build(),
+        )
+        .manage(ShortcutRegistered(Mutex::new(None)))
         .manage(SidecarState(Mutex::new(None)))
         .manage(ProfileState(Mutex::new(Registry { current: String::new(), profiles: vec![] })))
         .setup(|app| {
@@ -191,16 +272,34 @@ pub fn run() {
             tauri::async_runtime::block_on(sc.init(&data_dir.to_string_lossy(), &profile, &bundled.to_string_lossy()))?;
             *app.state::<SidecarState>().0.lock().unwrap() = Some(sc);
 
+            // Fenêtre de capture rapide : créée masquée, affichée par le raccourci global.
+            WebviewWindowBuilder::new(app, "capture", WebviewUrl::App("index.html".into()))
+                .title("Capture rapide")
+                .inner_size(540.0, 440.0)
+                .resizable(false)
+                .always_on_top(true)
+                .visible(false)
+                .build()?;
+            let accel = tauri::async_runtime::block_on(app.state::<SidecarState>().get()?.call("settings.get", serde_json::json!({})))
+                .ok()
+                .and_then(|s| s["capture"]["shortcut"].as_str().map(String::from))
+                .unwrap_or_else(|| DEFAULT_SHORTCUT.to_string());
+            if let Err(e) = register_shortcut(app.handle(), &accel).or_else(|_| register_shortcut(app.handle(), DEFAULT_SHORTCUT)) {
+                eprintln!("[shell] raccourci de capture non enregistré : {e}");
+            }
+
             // Icône de la zone de notification : l'agent continue de tourner fenêtre fermée.
             let open = MenuItem::with_id(app, "open", "Ouvrir ASSISTANT", true, None::<&str>)?;
+            let cap = MenuItem::with_id(app, "capture", "Capture rapide", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &cap, &quit])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().ok_or("icône absente")?.clone())
                 .tooltip("ASSISTANT")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_main(app),
+                    "capture" => toggle_capture(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -214,7 +313,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![app_version, rpc, secret_set, set_badge, profiles_list, profile_create, profile_rename, profile_switch, profile_delete, profiles_overview])
+        .invoke_handler(tauri::generate_handler![app_version, rpc, secret_set, set_badge, set_capture_shortcut, hide_capture, capture_screen, profiles_list, profile_create, profile_rename, profile_switch, profile_delete, profiles_overview])
         .build(tauri::generate_context!())
         .expect("erreur au lancement de l'application")
         .run(|app, event| {
