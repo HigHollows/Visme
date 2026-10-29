@@ -55,8 +55,10 @@ describe("plugin Graphify de bout en bout", () => {
     expect(edge).toMatchObject({ manual: true }); // lien posé par un plugin : conservé à la reconstruction
     expect(g.edges.some((e: any) => e.src === `doc:${added.id}` && e.rel === "mentions")).toBe(true);
     // audit : actions du plugin tracées
-    const audit = (await call("audit.list", { limit: 200 })).result.filter((a: any) => a.actor === "plugin:graphify").map((a: any) => a.action);
-    expect(audit).toEqual(expect.arrayContaining(["plugin.ai", "memory.link", "plugin.run"]));
+    await vi.waitFor(async () => {
+      const audit = (await call("audit.list", { limit: 200 })).result.filter((a: any) => a.actor === "plugin:graphify").map((a: any) => a.action);
+      expect(audit).toEqual(expect.arrayContaining(["plugin.ai", "memory.link", "plugin.run"]));
+    }, { timeout: 10_000 });
 
     // Outil du plugin dans le chat : nom « sûr » côté fournisseur, résolu côté hôte.
     const preset = (await call("presets.create", { name: "Graphe", systemPrompt: "Réponds.", tools: ["plugin:graphify:relations"] })).result;

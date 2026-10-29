@@ -315,4 +315,37 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 9,
+    sql: `
+      CREATE TABLE meetings (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        source TEXT NOT NULL,                 -- recording | import
+        started_at INTEGER NOT NULL,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,                 -- recording | transcribing | processing | ready | error
+        error TEXT,
+        language TEXT,
+        audio_kept INTEGER NOT NULL DEFAULT 1,
+        transcript TEXT,                      -- JSON [{start,end,speaker?,text}] en ms
+        minutes TEXT,                         -- JSON {summary, decisions, actions, nextMeetings}
+        document_id TEXT,                     -- compte-rendu indexé comme document (mémoire)
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE meeting_segments (
+        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+        idx INTEGER NOT NULL,
+        offset_ms INTEGER NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        file TEXT NOT NULL,
+        mime TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',   -- pending | done | error
+        error TEXT,
+        result TEXT,                          -- JSON {text, segments?}
+        PRIMARY KEY (meeting_id, idx)
+      );
+    `,
+  },
 ];

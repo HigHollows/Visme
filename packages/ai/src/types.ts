@@ -52,12 +52,21 @@ export interface Transcript {
   segments?: { start: number; end: number; speaker?: string; text: string }[];
 }
 
+export interface TranscribeOptions {
+  model: string;
+  language?: string;
+  /** Nom de fichier avec extension (le fournisseur s'en sert pour reconnaître le format). */
+  filename?: string;
+  mime?: string;
+  signal?: AbortSignal;
+}
+
 export interface AIProvider {
   readonly id: string;
   readonly capabilities: Capabilities;
   chat(req: ChatRequest): AsyncIterable<ChatChunk>;
   embed(texts: string[], model: string): Promise<number[][]>;
-  transcribe(audio: Uint8Array, opts: { model: string; language?: string }): Promise<Transcript>;
+  transcribe(audio: Uint8Array, opts: TranscribeOptions): Promise<Transcript>;
   testConnection(): Promise<{ ok: boolean; error?: string }>;
 }
 

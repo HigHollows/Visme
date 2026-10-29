@@ -9,6 +9,8 @@ import {
   type Route,
   type TaskKind,
   type TaskRoute,
+  type Transcript,
+  type TranscribeOptions,
 } from "./types";
 
 export interface RouterOptions {
@@ -79,6 +81,23 @@ export class AIRouter {
       }
     }
     throw lastErr;
+  }
+
+  /** Transcription audio (route « stt ») avec bascule sur le secours en cas de limite de débit ou de panne. */
+  async transcribe(audio: Uint8Array, opts: Omit<TranscribeOptions, "model">): Promise<Transcript> {
+    this.opts.tracker?.assertWithinBudget();
+    const { primary, fallback } = this.routeFor("stt");
+    const run = (r: Route) => {
+      const p = this.provider(r.provider);
+      if (!p.capabilities.transcription) throw new AIError(`${r.provider} ne propose pas de transcription`, "unsupported");
+      return p.transcribe(audio, { ...opts, model: r.model });
+    };
+    try {
+      return await run(primary);
+    } catch (e) {
+      if (fallback && e instanceof AIError && RETRYABLE.has(e.kind)) return run(fallback);
+      throw e;
+    }
   }
 
   async embed(texts: string[]): Promise<number[][]> {

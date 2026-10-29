@@ -19,6 +19,12 @@ export class RpcError extends Error {
 
 export class RpcServer {
   private handlers = new Map<string, Handler>();
+  /** Garde optionnelle : renvoie un message d'erreur pour refuser une méthode (ex. mode lecture seule). */
+  private guard: ((method: string) => string | null) | null = null;
+
+  setGuard(g: ((method: string) => string | null) | null) {
+    this.guard = g;
+  }
 
   register(method: string, h: Handler) {
     this.handlers.set(method, h);
@@ -34,6 +40,8 @@ export class RpcServer {
     }
     const h = this.handlers.get(req.method);
     try {
+      const denied = this.guard?.(req.method);
+      if (denied) throw new RpcError(-32003, denied);
       if (!h) throw new RpcError(-32601, `Méthode inconnue : ${req.method}`);
       const result = await h(req.params ?? {});
       return req.id === undefined ? null : JSON.stringify({ jsonrpc: "2.0", id: req.id, result: result ?? null });

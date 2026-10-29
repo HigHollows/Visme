@@ -135,3 +135,34 @@ describe("vision", () => {
     expect(body.messages[0].content[0]).toEqual({ type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } });
   });
 });
+
+describe("transcription", () => {
+  const ok = (body: object, calls: any[] = []) =>
+    new OpenAIProvider({ apiKey: "k", fetch: (async (_u: string, init: RequestInit) => { calls.push(init.body as FormData); return new Response(JSON.stringify(body)); }) as never });
+
+  it("whisper-1 : segments horodatés ; fichier nommé avec son extension", async () => {
+    const calls: FormData[] = [];
+    const p = ok({ text: "Bonjour tout le monde", segments: [{ start: 0, end: 2.5, text: " Bonjour " }, { start: 2.5, end: 4, text: "tout le monde" }, { start: 4, end: 5, text: "  " }] }, calls);
+    const t = await p.transcribe(new Uint8Array([1, 2, 3]), { model: "whisper-1", language: "fr", filename: "reunion.m4a", mime: "audio/mp4" });
+    expect(t.segments).toEqual([{ start: 0, end: 2.5, speaker: undefined, text: "Bonjour" }, { start: 2.5, end: 4, speaker: undefined, text: "tout le monde" }]);
+    const f = calls[0]!;
+    expect(f.get("response_format")).toBe("verbose_json");
+    expect(f.get("language")).toBe("fr");
+    expect((f.get("file") as File).name).toBe("reunion.m4a");
+  });
+
+  it("modèle diarize : interlocuteurs conservés", async () => {
+    const calls: FormData[] = [];
+    const p = ok({ segments: [{ start: 0, end: 1, speaker: "A", text: "Salut" }, { start: 1, end: 2, speaker: "B", text: "Hello" }] }, calls);
+    const t = await p.transcribe(new Uint8Array([1]), { model: "gpt-4o-transcribe-diarize" });
+    expect(t.text).toBe("Salut Hello");
+    expect(t.segments?.map((s) => s.speaker)).toEqual(["A", "B"]);
+    expect(calls[0]!.get("response_format")).toBe("diarized_json");
+  });
+
+  it("modèle simple : texte seul ; erreurs HTTP classées", async () => {
+    expect(await ok({ text: " ok " }).transcribe(new Uint8Array([1]), { model: "gpt-4o-mini-transcribe" })).toEqual({ text: "ok" });
+    const bad = new OpenAIProvider({ apiKey: "k", fetch: (async () => new Response("quota", { status: 429 })) as never });
+    await expect(bad.transcribe(new Uint8Array([1]), { model: "whisper-1" })).rejects.toMatchObject({ kind: "rate_limit" });
+  });
+});

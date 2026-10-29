@@ -44,6 +44,20 @@ export const settingsSchema = z.object({
       alertDays: z.array(z.number().int().min(0).max(365)).max(8).default([30, 7, 1]),
     })
     .default({}),
+  meetings: z
+    .object({
+      /** Par défaut l'audio est supprimé dès que la transcription est terminée. */
+      retainAudio: z.boolean().default(false),
+      /** Langue de la réunion (aide la transcription) ; vide = détection automatique. */
+      language: z.string().max(10).default(""),
+    })
+    .default({}),
+  capture: z
+    .object({
+      /** Raccourci global ouvrant la capture rapide (syntaxe Tauri). */
+      shortcut: z.string().max(60).default("CommandOrControl+Shift+Space"),
+    })
+    .default({}),
   style: z
     .object({
       /** Apprentissage de mon style depuis mes mails envoyés : désactivé tant que je n'ai pas donné mon accord. */

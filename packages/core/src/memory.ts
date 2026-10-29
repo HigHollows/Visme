@@ -75,11 +75,18 @@ export class MemoryService {
         const id = `${kind}:${r.id}`;
         addNode({ id, type: kind, label: r.title, props: { refId: r.id } });
         if (ref.type === "mail") addEdge(`mail:${ref.id}`, id, "derived");
+        else if (ref.type === "meeting") addEdge(`meeting:${ref.id}`, id, "derived");
         else if (ref.type === "document") addEdge(`doc:${ref.id}`, id, "derived");
       }
     };
     link("event", db.prepare("SELECT id, title, source_ref AS sourceRef FROM events WHERE source_ref IS NOT NULL").all() as never);
     link("task", db.prepare("SELECT id, title, source_ref AS sourceRef FROM tasks WHERE source_ref IS NOT NULL").all() as never);
+
+    // Réunions : un nœud par réunion terminée, relié à son compte-rendu indexé.
+    for (const m of db.prepare("SELECT id, title, document_id AS docId FROM meetings WHERE status='ready'").all() as { id: string; title: string; docId: string | null }[]) {
+      addNode({ id: `meeting:${m.id}`, type: "event", label: m.title, props: { meetingId: m.id } });
+      if (m.docId) addEdge(`meeting:${m.id}`, `doc:${m.docId}`, "minutes");
+    }
 
     // Échéances : le service devient une organisation reliée à sa source.
     for (const d of db.prepare("SELECT service, source_ref AS sourceRef FROM deadlines WHERE status='active'").all() as { service: string; sourceRef: string | null }[]) {

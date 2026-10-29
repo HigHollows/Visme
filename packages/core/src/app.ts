@@ -15,6 +15,7 @@ import { MemoryService } from "./memory";
 import { PresetService } from "./presets";
 import { DraftService, StyleService } from "./style";
 import { PluginManager } from "./plugins/manager";
+import { MeetingService } from "./meetings/service";
 import { ProposalService } from "./proposals";
 import { search } from "./search";
 import { TaskService } from "./tasks";
@@ -49,7 +50,7 @@ export function createApp(opts: AppOptions = {}): RpcServer {
 
   rpc.register("ping", () => "pong");
 
-  rpc.register("init", (p: { dataDir: string; key: string; profile?: string; bundledPluginsDir?: string }) => {
+  rpc.register("init", (p: { dataDir: string; key: string; profile?: string; bundledPluginsDir?: string; readOnly?: boolean }) => {
     if (db) throw new RpcError(-32002, "Déjà initialisée");
     const profile = (p.profile ?? "default").replace(/[^a-zA-Z0-9_-]/g, "");
     if (!profile) throw new RpcError(-32602, "Nom de profil invalide");
@@ -57,6 +58,11 @@ export function createApp(opts: AppOptions = {}): RpcServer {
     dataDirPath = p.dataDir;
     bundledPluginsDir = p.bundledPluginsDir;
     db = openDatabase(join(p.dataDir, `${profile}.db`), { key: p.key });
+    if (p.readOnly) {
+      // Vue combinée : ce sidecar n'a ni agent, ni clés, ni accès réseau, et ne répond qu'à « overview ».
+      rpc.setGuard((m) => (m === "overview" || m === "ping" ? null : "Profil ouvert en lecture seule"));
+      return { ok: true };
+    }
     agent().configure();
     return { ok: true };
   });
@@ -202,6 +208,7 @@ export function createApp(opts: AppOptions = {}): RpcServer {
 
   let tasksSvc: TaskService | null = null;
   const tasks = () => (tasksSvc ??= new TaskService(need()));
+  const tasks_ = tasks;
   let deadlineSvc: DeadlineService | null = null;
   const deadlines = () => (deadlineSvc ??= new DeadlineService(need(), cal(), tasks()));
   let proposalSvc: ProposalService | null = null;
@@ -227,6 +234,28 @@ export function createApp(opts: AppOptions = {}): RpcServer {
       db: need(), pluginsDir: join(dataDirPath, "plugins"), bundledDir: bundledPluginsDir, settings: loadSettings,
       router: getRouter, memory, proposals, cal, fetch: opts.fetch,
     }));
+
+  let meetingSvc: MeetingService | null = null;
+  const meetings = () =>
+    (meetingSvc ??= new MeetingService({
+      db: need(), dataDir: dataDirPath, settings: loadSettings, router: getRouter, tasks: tasks(), cal: cal(), proposals: proposals(),
+      documents: { add: (p) => docs().add(p), remove: (id) => docs().remove(id) }, notify, now: opts.now,
+    }));
+
+  rpc.register("meetings.list", () => meetings().list());
+  rpc.register("meetings.get", (p: { id: string }) => meetings().get(p.id));
+  rpc.register("meetings.start", (p: { title?: string; language?: string; consent: boolean }) => meetings().start(p));
+  rpc.register("meetings.segment", (p: any) => meetings().addSegment(p));
+  rpc.register("meetings.finish", (p: { id: string; durationMs: number }) => (meetings().finish(p.id, p.durationMs), { ok: true }));
+  rpc.register("meetings.import", (p: { path: string; title?: string }) => meetings().import(p.path, p.title));
+  rpc.register("meetings.rename", (p: { id: string; title: string }) => (meetings().rename(p.id, p.title), { ok: true }));
+  rpc.register("meetings.delete", (p: { id: string }) => (meetings().delete(p.id), { ok: true }));
+  rpc.register("meetings.deleteAudio", (p: { id: string }) => (meetings().deleteAudio(p.id), { ok: true }));
+  rpc.register("meetings.retry", (p: { id: string }) => (meetings().retry(p.id), { ok: true }));
+  rpc.register("meetings.reprocess", (p: { id: string }) => {
+    void meetings().reprocess(p.id).catch(() => {});
+    return { started: true };
+  });
 
   let styleSvc: StyleService | null = null;
   const style = () => (styleSvc ??= new StyleService({ db: need(), settings: loadSettings, router: getRouter }));
@@ -277,6 +306,13 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   rpc.register("memory.forget", (p: { id: string }) => (memory().forget(p.id), { ok: true }));
   rpc.register("memory.clear", () => (memory().clearAll(), { ok: true }));
 
+  rpc.register("overview", () => {
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const from = start.getTime();
+    const events = (cal().list(from, from + 86_400_000) as { title: string; start: number; allDay: boolean }[]).slice(0, 8).map((e) => ({ title: e.title, start: e.start, allDay: e.allDay }));
+    const tasks = (tasks_().list({ status: "open" }) as { title: string; due: number | null }[]).filter((t) => t.due !== null && t.due < from + 86_400_000).slice(0, 8).map((t) => ({ title: t.title, due: t.due }));
+    return { events, tasks, pendingProposals: proposals().count() };
+  });
   rpc.register("deadlines.list", (p: { status?: "active" | "cancelled" | "paid" }) => deadlines().list(p?.status));
   rpc.register("deadlines.summary", () => ({ ...deadlines().summary(), upcoming: deadlines().upcoming(Math.max(...loadSettings().deadlines.alertDays, 30)) }));
   rpc.register("deadlines.create", (p: any) => deadlines().create(p));

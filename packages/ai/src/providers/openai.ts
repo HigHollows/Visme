@@ -5,6 +5,7 @@ import {
   type ChatMessage,
   type ChatRequest,
   type Transcript,
+  type TranscribeOptions,
 } from "../types";
 import { httpError, networkGuard, sseData, type FetchFn } from "./sse";
 
@@ -116,17 +117,25 @@ export class OpenAIProvider implements AIProvider {
     return json.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
   }
 
-  async transcribe(audio: Uint8Array, opts: { model: string; language?: string }): Promise<Transcript> {
+  async transcribe(audio: Uint8Array, opts: TranscribeOptions): Promise<Transcript> {
     const form = new FormData();
-    form.set("file", new Blob([audio as BlobPart]), "audio.webm");
+    form.set("file", new Blob([audio as BlobPart], { type: opts.mime ?? "application/octet-stream" }), opts.filename ?? "audio.webm");
     form.set("model", opts.model);
     if (opts.language) form.set("language", opts.language);
-    form.set("response_format", "json");
+    // Les modèles « diarize » identifient les interlocuteurs ; whisper-1 donne des segments horodatés ; les autres, du texte.
+    const diarize = /diarize/i.test(opts.model);
+    form.set("response_format", diarize ? "diarized_json" : opts.model === "whisper-1" ? "verbose_json" : "json");
+    if (diarize) form.set("chunking_strategy", "auto");
     const res = await networkGuard(
-      this.f(`${this.base}/audio/transcriptions`, { method: "POST", headers: this.auth(), body: form }),
+      this.f(`${this.base}/audio/transcriptions`, { method: "POST", headers: this.auth(), body: form, signal: opts.signal }),
     );
     if (!res.ok) throw httpError(res.status, await res.text());
-    return { text: ((await res.json()) as { text: string }).text };
+    const j = (await res.json()) as { text?: string; segments?: { start?: number; end?: number; speaker?: string; text?: string }[] };
+    const segments = (j.segments ?? [])
+      .filter((s) => typeof s.text === "string" && s.text.trim())
+      .map((s) => ({ start: Number(s.start) || 0, end: Number(s.end) || 0, speaker: s.speaker, text: s.text!.trim() }));
+    const text = (j.text ?? segments.map((s) => s.text).join(" ")).trim();
+    return { text, ...(segments.length && { segments }) };
   }
 
   async testConnection() {

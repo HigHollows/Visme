@@ -127,3 +127,25 @@ describe("AIRouter", () => {
     expect(audit).toEqual([3]);
   });
 });
+
+describe("AIRouter.transcribe", () => {
+  const stt = (id: string, fn: () => Promise<{ text: string }>): AIProvider => ({
+    ...fake(id, async function* () {}),
+    capabilities: { chat: false, tools: false, vision: false, embeddings: false, transcription: true },
+    transcribe: fn,
+  });
+  const route = (p: string) => ({ provider: p, model: "m" });
+
+  it("bascule sur le secours si le primaire est indisponible", async () => {
+    const bad = stt("a", async () => { throw new AIError("503", "unavailable"); });
+    const good = stt("b", async () => ({ text: "ok" }));
+    const r = new AIRouter({ providers: { a: bad, b: good }, routes: { stt: { primary: route("a"), fallback: route("b") } } });
+    expect(await r.transcribe(new Uint8Array([1]), {})).toEqual({ text: "ok" });
+  });
+
+  it("refuse un fournisseur sans transcription (ex. Claude)", async () => {
+    const claude = fake("c", async function* () {});
+    const r = new AIRouter({ providers: { c: claude }, routes: { stt: { primary: route("c") } } });
+    await expect(r.transcribe(new Uint8Array([1]), {})).rejects.toMatchObject({ kind: "unsupported" });
+  });
+});
