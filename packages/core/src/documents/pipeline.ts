@@ -16,6 +16,7 @@ export interface PipelineDeps {
   router: () => AIRouter | null;
   notify: (method: string, params: unknown) => void;
   /** Échéances/abonnements repérés dans un document (traités comme ceux des mails). */
+  onIndexed?: (doc: { id: string; name: string }) => void;
   onObligations?: (doc: { id: string; name: string }, obligations: ObligationSuggestion[]) => void;
 }
 
@@ -226,6 +227,7 @@ export class DocumentPipeline {
       try { this.d.onObligations?.({ id, name: doc.name }, result.obligations); } catch (e) { warnings.push(`Échéances non traitées : ${e instanceof Error ? e.message : e}`); }
     }
     this.d.notify("documents.event", { id, status: "ready" });
+    try { this.d.onIndexed?.({ id, name: doc.name }); } catch { /* un plugin ne doit jamais faire échouer l'indexation */ }
   }
 
   private async embedChunks(router: AIRouter, chunks: string[], ids: number[]) {

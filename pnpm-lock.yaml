@@ -79,6 +79,9 @@ importers:
       '@assistant/db':
         specifier: workspace:*
         version: link:../db
+      '@assistant/plugins-sdk':
+        specifier: workspace:*
+        version: link:../plugins-sdk
       '@assistant/schemas':
         specifier: workspace:*
         version: link:../schemas
@@ -108,7 +111,11 @@ importers:
         specifier: ^9.6.0
         version: 9.6.0
 
-  packages/plugins-sdk: {}
+  packages/plugins-sdk:
+    dependencies:
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
 
   packages/schemas:
     dependencies:

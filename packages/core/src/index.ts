@@ -16,3 +16,4 @@ export * from "./proposals";
 export * from "./presets";
 export * from "./retrieval";
 export * from "./style";
+export * from "./plugins/manager";

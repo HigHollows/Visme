@@ -27,6 +27,7 @@ export interface AgentDeps {
   proposals: ProposalService;
   deadlines: DeadlineService;
   memory: MemoryService;
+  emit?: (event: "mail.analyzed" | "agent.cycle", payload: unknown) => void;
   notify: (method: string, params: unknown) => void;
   now?: () => number;
   /** Injectables pour les tests. */
@@ -152,6 +153,7 @@ export class Agent {
         .prepare("UPDATE agent_runs SET finished_at=?, summary=?, stats=?, error=? WHERE id=?")
         .run(this.now(), summary, JSON.stringify(stats), error, runId);
       this.running = false;
+      this.d.emit?.("agent.cycle", { summary });
       this.d.notify("agent.event", { status: "idle", summary, pendingProposals: this.d.proposals.count() });
     }
     return { summary: summarize(stats), stats };
@@ -264,6 +266,7 @@ export class Agent {
     );
     stats.autoDeadlines += ob.auto;
     stats.proposed += ob.proposed;
+    this.d.emit?.("mail.analyzed", { mailId: mail.id, category: analysis.category });
     audit(this.d.db, "ai", "mail.analyze", { mailId: mail.id, category: analysis.category, events: analysis.events.length, tasks: analysis.tasks.length });
   }
 

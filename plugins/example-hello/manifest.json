@@ -1,0 +1,17 @@
+{
+  "id": "example-hello",
+  "name": "Exemple : Bonjour",
+  "version": "1.0.0",
+  "description": "Plugin d'exemple minimal : un outil de chat et un compteur de cycles de l'agent. Sert de modèle (voir docs/plugins.md).",
+  "author": "ASSISTANT",
+  "permissions": [],
+  "triggers": [{ "event": "agent.cycle" }],
+  "tools": [
+    {
+      "name": "hello",
+      "description": "Salue une personne et indique combien de cycles de l'agent ont eu lieu.",
+      "parameters": { "type": "object", "properties": { "name": { "type": "string" } }, "required": ["name"] }
+    }
+  ],
+  "entry": "index.mjs"
+}

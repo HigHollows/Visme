@@ -1,0 +1,17 @@
+{
+  "id": "graphify",
+  "name": "Graphify",
+  "version": "1.0.0",
+  "description": "Enrichit la mémoire en graphe : repère les relations entre personnes, organisations et projets dans vos documents.",
+  "author": "ASSISTANT",
+  "permissions": ["ai", "documents:read", "memory:read", "memory:write"],
+  "triggers": [{ "event": "document.indexed" }],
+  "tools": [
+    {
+      "name": "relations",
+      "description": "Donne les éléments liés à une personne, organisation, projet ou sujet dans la mémoire en graphe.",
+      "parameters": { "type": "object", "properties": { "name": { "type": "string", "description": "Nom exact de l'entité" }, "type": { "type": "string", "enum": ["person", "org", "project", "topic"] } }, "required": ["name"] }
+    }
+  ],
+  "entry": "index.mjs"
+}

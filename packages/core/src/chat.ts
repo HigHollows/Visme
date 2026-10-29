@@ -222,7 +222,8 @@ export function registerChat(d: ChatDeps) {
         const plugin = d.pluginTools?.();
         const tools: ToolDef[] = [
           ...preset.tools.filter((t) => TOOL_DEFS[t]).map((t) => TOOL_DEFS[t]!),
-          ...(plugin?.defs.filter((t) => preset.tools.includes(t.name)) ?? []),
+          // Les fournisseurs d'IA n'acceptent pas « : » dans un nom d'outil : on expose « plugin__id__outil ».
+          ...(plugin?.defs.filter((t) => preset.tools.includes(t.name)).map((t) => ({ ...t, name: t.name.replace(/:/g, "__") })) ?? []),
         ];
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
           const calls: { id: string; name: string; args: unknown }[] = [];
@@ -237,7 +238,7 @@ export function registerChat(d: ChatDeps) {
           if (!calls.length || round === MAX_TOOL_ROUNDS) break;
           messages.push({ role: "assistant", content: roundText, toolCalls: calls });
           for (const c of calls) {
-            const result = await runTool(c.name, c.args);
+            const result = await runTool(c.name.replace(/^plugin__([a-z][a-z0-9-]*)__/, "plugin:$1:"), c.args);
             emit({ type: "tool", name: c.name, result: result.slice(0, 200) });
             messages.push({ role: "tool", toolCallId: c.id, content: result });
           }

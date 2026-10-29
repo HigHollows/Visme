@@ -199,3 +199,36 @@ export class MemoryService {
     })();
   }
 }
+
+/** Extension utilisée par la couche plugins (API `memory.link`). */
+export type PluginEndpoint = { document: string } | { type: "person" | "org" | "project" | "topic"; label: string };
+
+declare module "./memory" {
+  interface MemoryService {
+    pluginLink(pluginId: string, a: PluginEndpoint, b: PluginEndpoint, rel: string): boolean;
+  }
+}
+
+MemoryService.prototype.pluginLink = function (this: MemoryService, pluginId: string, a: PluginEndpoint, b: PluginEndpoint, rel: string) {
+  const db = (this as unknown as { db: Db }).db;
+  const skip = (this as unknown as { suppressed(): Set<string> }).suppressed();
+  const resolve = (e: PluginEndpoint): string | null => {
+    if ("document" in e) {
+      return db.prepare("SELECT 1 FROM nodes WHERE id=?").get(`doc:${e.document}`) ? `doc:${e.document}` : null;
+    }
+    const label = String(e.label ?? "").trim().slice(0, 200);
+    const s = slug(label);
+    if (!s || !["person", "org", "project", "topic"].includes(e.type)) return null;
+    const id = e.type === "person" || e.type === "org" ? `ent:${e.type}:${s}` : `${e.type}:${s}`;
+    if (skip.has(id)) return null; // l'utilisateur a demandé à l'oublier
+    db.prepare("INSERT OR IGNORE INTO nodes(id, type, label, props) VALUES (?,?,?,?)").run(id, e.type, label, JSON.stringify({ plugin: pluginId }));
+    return id;
+  };
+  const src = resolve(a);
+  const dst = resolve(b);
+  const r = String(rel ?? "").trim().slice(0, 60) || "lié à";
+  if (!src || !dst || src === dst || skip.has(`edge:${src}|${dst}|${r}`)) return false;
+  db.prepare("INSERT OR IGNORE INTO edges(src, dst, rel, derived) VALUES (?,?,?,0)").run(src, dst, r);
+  audit(db, `plugin:${pluginId}`, "memory.link", { src, dst, rel: r });
+  return true;
+};

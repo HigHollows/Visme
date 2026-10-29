@@ -14,6 +14,7 @@ import { MailService } from "./mail";
 import { MemoryService } from "./memory";
 import { PresetService } from "./presets";
 import { DraftService, StyleService } from "./style";
+import { PluginManager } from "./plugins/manager";
 import { ProposalService } from "./proposals";
 import { search } from "./search";
 import { TaskService } from "./tasks";
@@ -39,6 +40,8 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   /** Clés API en mémoire uniquement ; elles viennent du trousseau via le shell. */
   const keys = new Map<string, string>();
   let db: Db | null = null;
+  let dataDirPath = "";
+  let bundledPluginsDir: string | undefined;
   const need = (): Db => {
     if (!db) throw new RpcError(-32001, "Application non initialisée");
     return db;
@@ -46,11 +49,13 @@ export function createApp(opts: AppOptions = {}): RpcServer {
 
   rpc.register("ping", () => "pong");
 
-  rpc.register("init", (p: { dataDir: string; key: string; profile?: string }) => {
+  rpc.register("init", (p: { dataDir: string; key: string; profile?: string; bundledPluginsDir?: string }) => {
     if (db) throw new RpcError(-32002, "Déjà initialisée");
     const profile = (p.profile ?? "default").replace(/[^a-zA-Z0-9_-]/g, "");
     if (!profile) throw new RpcError(-32602, "Nom de profil invalide");
     mkdirSync(p.dataDir, { recursive: true });
+    dataDirPath = p.dataDir;
+    bundledPluginsDir = p.bundledPluginsDir;
     db = openDatabase(join(p.dataDir, `${profile}.db`), { key: p.key });
     agent().configure();
     return { ok: true };
@@ -111,6 +116,7 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   const docs = () =>
     (pipeline ??= new DocumentPipeline({
       db: need(), settings: loadSettings, router: getRouter, notify,
+      onIndexed: (doc) => plugins().emit("document.indexed", doc),
       onObligations: (doc, obligations) => {
         const a = loadSettings().agent;
         handleObligations(
@@ -206,6 +212,7 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   const agent = () =>
     (agentSvc ??= new Agent({
       db: need(), settings: loadSettings, router: getRouter, mail: mail(), cal: cal(), tasks: tasks(), proposals: proposals(), deadlines: deadlines(), memory: memory(),
+      emit: (e, p) => plugins().emit(e, p),
       notify, now: opts.now, setTimer: opts.setTimer, clearTimer: opts.clearTimer,
     }));
 
@@ -213,6 +220,13 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   const memory = () => (memSvc ??= new MemoryService(need()));
   let presetSvc: PresetService | null = null;
   const presets = () => (presetSvc ??= new PresetService(need()));
+
+  let pluginSvc: PluginManager | null = null;
+  const plugins = () =>
+    (pluginSvc ??= new PluginManager({
+      db: need(), pluginsDir: join(dataDirPath, "plugins"), bundledDir: bundledPluginsDir, settings: loadSettings,
+      router: getRouter, memory, proposals, cal, fetch: opts.fetch,
+    }));
 
   let styleSvc: StyleService | null = null;
   const style = () => (styleSvc ??= new StyleService({ db: need(), settings: loadSettings, router: getRouter }));
@@ -223,7 +237,16 @@ export function createApp(opts: AppOptions = {}): RpcServer {
     rpc, db: need, settings: loadSettings, keys, fetch: opts.fetch, notify,
     presets, memory, proposals, cal,
     styleHint: () => style().hint(null),
+    pluginTools: () => ({ defs: plugins().toolDefs(), call: (n, a) => plugins().callTool(n, a) }),
   });
+
+  rpc.register("plugins.list", () => plugins().list());
+  rpc.register("plugins.available", () => plugins().available().map(({ dir: _d, ...rest }) => rest));
+  rpc.register("plugins.installBundled", (p: { id: string }) => plugins().installBundled(p.id));
+  rpc.register("plugins.installFolder", (p: { path: string }) => plugins().install(p.path));
+  rpc.register("plugins.enable", (p: { id: string; permissions: string[] }) => (plugins().enable(p.id, p.permissions ?? []), { ok: true }));
+  rpc.register("plugins.disable", (p: { id: string }) => (plugins().disable(p.id), { ok: true }));
+  rpc.register("plugins.remove", (p: { id: string }) => (plugins().remove(p.id), { ok: true }));
 
   rpc.register("style.list", () => ({ profiles: style().list(), groups: style().groups(), learningEnabled: loadSettings().style.learningEnabled }));
   rpc.register("style.set", (p: { scope: string; profile: unknown }) => (style().set(p.scope, p.profile, "manual"), { ok: true }));
