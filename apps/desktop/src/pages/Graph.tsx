@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { tr } from "../i18n";
 import { rpc } from "../rpc";
 
 interface GNode { id: string; type: string; label: string; degree: number; props: Record<string, any> }
@@ -6,9 +7,9 @@ interface GEdge { src: string; dst: string; rel: string; manual: boolean }
 interface Pos { x: number; y: number; vx: number; vy: number }
 
 const TYPES: Record<string, { label: string; color: string }> = {
-  person: { label: "Personnes", color: "#2563eb" }, org: { label: "Organisations", color: "#16a34a" }, mail: { label: "Mails", color: "#ea580c" },
-  document: { label: "Documents", color: "#9333ea" }, event: { label: "Événements", color: "#0891b2" }, task: { label: "Tâches", color: "#ca8a04" },
-  project: { label: "Projets", color: "#dc2626" }, topic: { label: "Sujets", color: "#64748b" },
+  person: { label: tr("Personnes"), color: "#2563eb" }, org: { label: tr("Organisations"), color: "#16a34a" }, mail: { label: tr("Mails"), color: "#ea580c" },
+  document: { label: tr("Documents"), color: "#9333ea" }, event: { label: tr("Événements"), color: "#0891b2" }, task: { label: tr("Tâches"), color: "#ca8a04" },
+  project: { label: tr("Projets"), color: "#dc2626" }, topic: { label: tr("Sujets"), color: "#64748b" },
 };
 const btn = "rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800";
 const input = "rounded-md border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700";
@@ -101,10 +102,10 @@ export function Graph({ onOpen }: { onOpen: (type: string, ref: string) => void 
               <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: v.color }} />{v.label}
             </label>
           ))}
-          <button className={btn} onClick={load}>Actualiser</button>
+          <button className={btn} onClick={load}>{tr("Actualiser")}</button>
         </div>
         {msg && <p role="alert" className="mb-2 text-sm text-red-600">{msg}</p>}
-        <svg viewBox={`0 0 ${W} ${H}`} className="h-[calc(100vh-14rem)] w-full cursor-grab rounded-md border border-neutral-200 dark:border-neutral-800" role="img" aria-label="Graphe de mémoire"
+        <svg viewBox={`0 0 ${W} ${H}`} className="h-[calc(100vh-14rem)] w-full cursor-grab rounded-md border border-neutral-200 dark:border-neutral-800" role="img" aria-label={tr("Graphe de mémoire")}
           onWheel={(e) => setView((v) => ({ ...v, k: Math.min(3, Math.max(0.4, v.k * (e.deltaY < 0 ? 1.1 : 0.9))) }))}
           onPointerDown={(e) => { if ((e.target as Element).tagName === "svg") { drag.current = { id: null, pan: true, sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y }; (e.currentTarget as Element).setPointerCapture(e.pointerId); } }}
           onPointerMove={(e) => {
@@ -135,44 +136,44 @@ export function Graph({ onOpen }: { onOpen: (type: string, ref: string) => void 
             })}
           </g>
         </svg>
-        <p className="mt-1 text-xs text-neutral-500">{shown.nodes.length} nœuds affichés sur {data.nodes.length} (les plus connectés) · traits pointillés = liens ajoutés à la main ou par un plugin · molette pour zoomer</p>
+        <p className="mt-1 text-xs text-neutral-500">{shown.nodes.length} {tr("nœuds affichés sur")} {data.nodes.length} {tr("(les plus connectés) · traits pointillés = liens ajoutés à la main ou par un plugin · molette pour zoomer")}</p>
       </div>
 
-      <aside className="w-72 shrink-0 space-y-4 overflow-y-auto text-sm" style={{ maxHeight: "calc(100vh - 10rem)" }} aria-label="Détail du nœud">
+      <aside className="w-72 shrink-0 space-y-4 overflow-y-auto text-sm" style={{ maxHeight: "calc(100vh - 10rem)" }} aria-label={tr("Détail du nœud")}>
         {node ? (
           <section className="space-y-2">
             <div><span className="rounded px-1 text-xs text-white" style={{ background: TYPES[node.type]?.color }}>{TYPES[node.type]?.label ?? node.type}</span></div>
-            <div className="flex gap-1"><input aria-label="Libellé" className={`${input} min-w-0 flex-1`} value={rename} onChange={(e) => setRename(e.target.value)} />
-              <button className={btn} disabled={!rename.trim() || rename === node.label} onClick={() => act(() => rpc("memory.renameNode", { id: node.id, label: rename }))}>Renommer</button></div>
-            {openable && openable[1] && <button className={btn} onClick={() => onOpen(openable[0]!, openable[1]!)}>Ouvrir</button>}
-            <h3 className="font-medium">Liens ({neighbors.length})</h3>
+            <div className="flex gap-1"><input aria-label={tr("Libellé")} className={`${input} min-w-0 flex-1`} value={rename} onChange={(e) => setRename(e.target.value)} />
+              <button className={btn} disabled={!rename.trim() || rename === node.label} onClick={() => act(() => rpc("memory.renameNode", { id: node.id, label: rename }))}>{tr("Renommer")}</button></div>
+            {openable && openable[1] && <button className={btn} onClick={() => onOpen(openable[0]!, openable[1]!)}>{tr("Ouvrir")}</button>}
+            <h3 className="font-medium">{tr("Liens (")}{neighbors.length})</h3>
             <ul className="space-y-1">
               {neighbors.map((n) => (
                 <li key={n.id + n.rel} className="flex items-center gap-1"><button className="flex-1 truncate text-left hover:underline" onClick={() => setSel(n.id)}>{n.rel} → {n.label}</button>
-                  <button aria-label="Supprimer le lien" className="px-1 text-neutral-400 hover:text-red-600" onClick={() => { const e = data.edges.find((x) => (x.src === node.id && x.dst === n.id) || (x.dst === node.id && x.src === n.id)); if (e) void act(() => rpc("memory.deleteEdge", e)); }}>×</button></li>
+                  <button aria-label={tr("Supprimer le lien")} className="px-1 text-neutral-400 hover:text-red-600" onClick={() => { const e = data.edges.find((x) => (x.src === node.id && x.dst === n.id) || (x.dst === node.id && x.src === n.id)); if (e) void act(() => rpc("memory.deleteEdge", e)); }}>{tr("×")}</button></li>
               ))}
             </ul>
             <div className="space-y-1 border-t border-neutral-200 pt-2 dark:border-neutral-800">
-              <h3 className="font-medium">Ajouter un lien</h3>
-              <select aria-label="Vers" className={`${input} w-full`} value={link.dst} onChange={(e) => setLink({ ...link, dst: e.target.value })}>
-                <option value="">Vers…</option>{data.nodes.filter((n) => n.id !== node.id).map((n) => <option key={n.id} value={n.id}>{n.label} ({TYPES[n.type]?.label})</option>)}
+              <h3 className="font-medium">{tr("Ajouter un lien")}</h3>
+              <select aria-label={tr("Vers")} className={`${input} w-full`} value={link.dst} onChange={(e) => setLink({ ...link, dst: e.target.value })}>
+                <option value="">{tr("Vers…")}</option>{data.nodes.filter((n) => n.id !== node.id).map((n) => <option key={n.id} value={n.id}>{n.label} ({TYPES[n.type]?.label})</option>)}
               </select>
-              <input aria-label="Relation" placeholder="Relation (ex. client de)" className={`${input} w-full`} value={link.rel} onChange={(e) => setLink({ ...link, rel: e.target.value })} />
-              <button className={btn} disabled={!link.dst} onClick={() => act(() => rpc("memory.addEdge", { src: node.id, dst: link.dst, rel: link.rel }).then(() => setLink({ dst: "", rel: "" })))}>Relier</button>
+              <input aria-label={tr("Relation")} placeholder={tr("Relation (ex. client de)")} className={`${input} w-full`} value={link.rel} onChange={(e) => setLink({ ...link, rel: e.target.value })} />
+              <button className={btn} disabled={!link.dst} onClick={() => act(() => rpc("memory.addEdge", { src: node.id, dst: link.dst, rel: link.rel }).then(() => setLink({ dst: "", rel: "" })))}>{tr("Relier")}</button>
             </div>
-            <button className={`${btn} text-red-700`} onClick={() => { if (confirm(`Oublier « ${node.label} » ? Il ne sera pas recréé automatiquement.`)) void act(() => rpc("memory.forget", { id: node.id }).then(() => setSel(null))); }}>Oublier ce nœud</button>
+            <button className={`${btn} text-red-700`} onClick={() => { if (confirm(tr("Oublier « {0} » ? Il ne sera pas recréé automatiquement.", node.label))) void act(() => rpc("memory.forget", { id: node.id }).then(() => setSel(null))); }}>{tr("Oublier ce nœud")}</button>
           </section>
-        ) : <p className="text-neutral-500">Cliquez sur un nœud pour le voir, le renommer ou le relier.</p>}
+        ) : <p className="text-neutral-500">{tr("Cliquez sur un nœud pour le voir, le renommer ou le relier.")}</p>}
         <section className="space-y-1 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <h3 className="font-medium">Nouveau nœud</h3>
-          <select aria-label="Type" className={`${input} w-full`} value={newNode.type} onChange={(e) => setNewNode({ ...newNode, type: e.target.value })}>
+          <h3 className="font-medium">{tr("Nouveau nœud")}</h3>
+          <select aria-label={tr("Type")} className={`${input} w-full`} value={newNode.type} onChange={(e) => setNewNode({ ...newNode, type: e.target.value })}>
             {Object.entries(TYPES).filter(([t]) => ["person", "org", "project", "topic"].includes(t)).map(([t, v]) => <option key={t} value={t}>{v.label}</option>)}
           </select>
-          <input aria-label="Nom" placeholder="Nom" className={`${input} w-full`} value={newNode.label} onChange={(e) => setNewNode({ ...newNode, label: e.target.value })} />
-          <button className={btn} disabled={!newNode.label.trim()} onClick={() => act(() => rpc("memory.addNode", newNode).then(() => setNewNode({ ...newNode, label: "" })))}>Ajouter</button>
+          <input aria-label={tr("Nom")} placeholder={tr("Nom")} className={`${input} w-full`} value={newNode.label} onChange={(e) => setNewNode({ ...newNode, label: e.target.value })} />
+          <button className={btn} disabled={!newNode.label.trim()} onClick={() => act(() => rpc("memory.addNode", newNode).then(() => setNewNode({ ...newNode, label: "" })))}>{tr("Ajouter")}</button>
         </section>
         <section className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <button className={`${btn} text-red-700`} onClick={() => { if (confirm("Effacer toute la mémoire en graphe (les liens ajoutés à la main aussi) ? Les mails et documents ne sont pas touchés.")) void act(() => rpc("memory.clear")); }}>Effacer la mémoire…</button>
+          <button className={`${btn} text-red-700`} onClick={() => { if (confirm(tr("Effacer toute la mémoire en graphe (les liens ajoutés à la main aussi) ? Les mails et documents ne sont pas touchés."))) void act(() => rpc("memory.clear")); }}>{tr("Effacer la mémoire…")}</button>
         </section>
       </aside>
     </div>

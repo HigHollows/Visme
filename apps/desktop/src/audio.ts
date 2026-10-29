@@ -1,4 +1,5 @@
 /** Utilitaires d'enregistrement audio dans la webview (MediaRecorder). */
+import { tr } from "./i18n";
 
 export function pickMime(): string {
   const candidates = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg;codecs=opus"];
@@ -40,7 +41,7 @@ export class SimpleRecorder {
 
   stop(): Promise<{ data: string; mime: string }> {
     return new Promise((resolve, reject) => {
-      if (!this.rec) return reject(new Error("Pas d'enregistrement en cours"));
+      if (!this.rec) return reject(new Error(tr("Pas d'enregistrement en cours")));
       const rec = this.rec;
       rec.onstop = async () => {
         this.stream?.getTracks().forEach((t) => t.stop());

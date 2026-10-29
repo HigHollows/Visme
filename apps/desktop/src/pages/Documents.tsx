@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { tr } from "../i18n";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -37,7 +38,7 @@ export function Documents({ selectedId }: { selectedId?: string | null }) {
     const res = await rpc<AddResult[]>("documents.add", { paths });
     const errors = res.filter((r) => r.error).map((r) => `${r.path.split(/[\\/]/).pop()} : ${r.error}`);
     const dups = res.filter((r) => r.duplicate).length;
-    setMsg([errors.join(" · "), dups ? `${dups} déjà importé(s)` : ""].filter(Boolean).join(" — "));
+    setMsg([errors.join(" · "), dups ? `${tr("{0} déjà importé(s)", dups)}` : ""].filter(Boolean).join(" — "));
     await refresh();
   }, [refresh]);
 
@@ -70,12 +71,12 @@ export function Documents({ selectedId }: { selectedId?: string | null }) {
         <div
           className={`mb-3 flex items-center gap-3 rounded-md border-2 border-dashed p-4 text-sm ${over ? "border-blue-500 bg-blue-50 dark:bg-blue-950" : "border-neutral-300 dark:border-neutral-700"}`}
         >
-          <span className="flex-1">Glissez des fichiers ici (PDF, DOCX, XLSX, PPTX, TXT, MD, CSV, images).</span>
-          <button className={btn} onClick={pick}>Choisir des fichiers…</button>
+          <span className="flex-1">{tr("Glissez des fichiers ici (PDF, DOCX, XLSX, PPTX, TXT, MD, CSV, images).")}</span>
+          <button className={btn} onClick={pick}>{tr("Choisir des fichiers…")}</button>
         </div>
         {msg && <p role="status" className="mb-2 text-sm text-amber-700 dark:text-amber-400">{msg}</p>}
         <ul className="flex-1 space-y-1 overflow-y-auto">
-          {docs.length === 0 && <li className="text-sm text-neutral-500">Aucun document pour l'instant.</li>}
+          {docs.length === 0 && <li className="text-sm text-neutral-500">{tr("Aucun document pour l'instant.")}</li>}
           {docs.map((d) => (
             <li key={d.id}>
               <button
@@ -85,7 +86,7 @@ export function Documents({ selectedId }: { selectedId?: string | null }) {
                 <span className="min-w-0 flex-1 truncate">{d.name}</span>
                 <span className="text-xs text-neutral-500">{size(d.size)}</span>
                 <span className={`text-xs ${d.status === "ready" ? "text-green-600" : d.status === "error" ? "text-red-600" : "text-amber-600"}`}>
-                  {d.status === "ready" ? "indexé" : d.status === "error" ? "erreur" : "indexation…"}
+                  {d.status === "ready" ? tr("indexé") : d.status === "error" ? tr("erreur") : tr("indexation…")}
                 </span>
               </button>
             </li>
@@ -93,9 +94,9 @@ export function Documents({ selectedId }: { selectedId?: string | null }) {
         </ul>
       </section>
 
-      <aside className="w-80 shrink-0 overflow-y-auto border-l border-neutral-200 pl-4 dark:border-neutral-800" aria-label="Détail du document">
+      <aside className="w-80 shrink-0 overflow-y-auto border-l border-neutral-200 pl-4 dark:border-neutral-800" aria-label={tr("Détail du document")}>
         {!current ? (
-          <p className="text-sm text-neutral-500">Sélectionnez un document.</p>
+          <p className="text-sm text-neutral-500">{tr("Sélectionnez un document.")}</p>
         ) : (
           <div className="space-y-3 text-sm">
             <h2 className="break-words text-base font-medium">{current.name}</h2>
@@ -105,17 +106,17 @@ export function Documents({ selectedId }: { selectedId?: string | null }) {
               <p className="flex flex-wrap gap-1">{current.tags.map((t) => <span key={t} className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs dark:bg-neutral-800">{t}</span>)}</p>
             )}
             {current.dates.length > 0 && (
-              <div><h3 className="font-medium">Dates détectées</h3><ul>{current.dates.map((x, i) => <li key={i}>{x.date} — {x.label}</li>)}</ul></div>
+              <div><h3 className="font-medium">{tr("Dates détectées")}</h3><ul>{current.dates.map((x, i) => <li key={i}>{x.date} — {x.label}</li>)}</ul></div>
             )}
             {current.entities.length > 0 && (
-              <div><h3 className="font-medium">Entités</h3><ul>{current.entities.map((x, i) => <li key={i}>{x.name} <span className="text-neutral-500">({x.type})</span></li>)}</ul></div>
+              <div><h3 className="font-medium">{tr("Entités")}</h3><ul>{current.entities.map((x, i) => <li key={i}>{x.name} <span className="text-neutral-500">({x.type})</span></li>)}</ul></div>
             )}
             {current.warnings.length > 0 && <ul className="text-xs text-neutral-500">{current.warnings.map((w, i) => <li key={i}>• {w}</li>)}</ul>}
             <div className="flex gap-2">
-              <button className={btn} onClick={() => rpc("documents.reindex", { id: current.id }).then(refresh)}>Ré-indexer</button>
-              <button className={btn} onClick={async () => { await rpc("documents.delete", { id: current.id }); setSel(null); refresh(); }}>Supprimer</button>
+              <button className={btn} onClick={() => rpc("documents.reindex", { id: current.id }).then(refresh)}>{tr("Ré-indexer")}</button>
+              <button className={btn} onClick={async () => { await rpc("documents.delete", { id: current.id }); setSel(null); refresh(); }}>{tr("Supprimer")}</button>
             </div>
-            <p className="text-xs text-neutral-500">Le fichier d'origine n'est jamais modifié ni supprimé.</p>
+            <p className="text-xs text-neutral-500">{tr("Le fichier d'origine n'est jamais modifié ni supprimé.")}</p>
           </div>
         )}
       </aside>

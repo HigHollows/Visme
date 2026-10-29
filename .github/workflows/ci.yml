@@ -35,6 +35,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      - run: pnpm i18n:check
       - run: pnpm test
 
   # Le moteur EMPAQUETÉ (bundle + Node embarqué + modules natifs) fonctionne sur chaque système.

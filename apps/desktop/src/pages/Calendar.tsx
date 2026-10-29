@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { tr, locale } from "../i18n";
 import { listen } from "@tauri-apps/api/event";
 import { rpc } from "../rpc";
 
@@ -19,8 +20,8 @@ const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDat
 const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 const mondayOf = (d: Date) => addDays(startOfDay(d), -((d.getDay() + 6) % 7));
 const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
-const fmtTime = (t: number) => new Date(t).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-const fmtDay = (d: Date, o: Intl.DateTimeFormatOptions) => d.toLocaleDateString("fr-FR", o);
+const fmtTime = (t: number) => new Date(t).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
+const fmtDay = (d: Date, o: Intl.DateTimeFormatOptions) => d.toLocaleDateString(locale(), o);
 const pad = (n: number) => String(n).padStart(2, "0");
 const toDateInput = (t: number) => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 const toTimeInput = (t: number) => { const d = new Date(t); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
@@ -81,7 +82,7 @@ function TimeGrid({ days, events, onOpen, onCreate }: { days: Date[]; events: Ev
         ))}
       </div>
       <div className="grid" style={{ gridTemplateColumns: `3rem repeat(${days.length}, 1fr)` }}>
-        <div>{Array.from({ length: 24 }, (_, h) => <div key={h} style={{ height: HOUR_PX }} className="pr-1 text-right text-[10px] text-neutral-500">{h ? `${h}h` : ""}</div>)}</div>
+        <div>{Array.from({ length: 24 }, (_, h) => <div key={h} style={{ height: HOUR_PX }} className="pr-1 text-right text-[10px] text-neutral-500">{h ? tr("{0}h", h) : ""}</div>)}</div>
         {days.map((d) => (
           <div key={+d} className="relative border-l border-neutral-200 dark:border-neutral-800" style={{ height: HOUR_PX * 24 }}
             onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); const h = Math.floor((e.clientY - r.top) / HOUR_PX); onCreate(+d + h * 3600_000); }}>
@@ -119,7 +120,7 @@ function Month({ anchor, events, onOpen, onCreate, onPick }: { anchor: Date; eve
               <button onClick={(e) => { e.stopPropagation(); onPick(d); }} className={`mb-0.5 text-xs ${sameDay(d, new Date()) ? "rounded-full bg-blue-600 px-1.5 text-white" : ""}`}>{d.getDate()}</button>
               <div className="space-y-0.5">
                 {evs.slice(0, 3).map((e) => <Chip key={e.id} ev={e} onOpen={onOpen} />)}
-                {evs.length > 3 && <button onClick={(e) => { e.stopPropagation(); onPick(d); }} className="text-xs text-neutral-500">+{evs.length - 3} autres</button>}
+                {evs.length > 3 && <button onClick={(e) => { e.stopPropagation(); onPick(d); }} className="text-xs text-neutral-500">+{evs.length - 3} {tr("autres")}</button>}
               </div>
             </div>
           );
@@ -131,7 +132,7 @@ function Month({ anchor, events, onOpen, onCreate, onPick }: { anchor: Date; eve
 
 function Agenda({ anchor, events, onOpen }: { anchor: Date; events: Ev[]; onOpen: (e: Ev) => void }) {
   const days = Array.from({ length: 30 }, (_, i) => addDays(startOfDay(anchor), i)).filter((d) => eventsOn(events, d).length);
-  if (!days.length) return <p className="text-sm text-neutral-500">Aucun événement sur les 30 prochains jours.</p>;
+  if (!days.length) return <p className="text-sm text-neutral-500">{tr("Aucun événement sur les 30 prochains jours.")}</p>;
   return (
     <div className="space-y-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 14rem)" }}>
       {days.map((d) => (
@@ -140,8 +141,8 @@ function Agenda({ anchor, events, onOpen }: { anchor: Date; events: Ev[]; onOpen
           <ul className="space-y-1">
             {eventsOn(events, d).map((e) => (
               <li key={e.id}><button onClick={() => onOpen(e)} className="flex w-full gap-3 rounded-md px-2 py-1 text-left text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                <span className="w-24 shrink-0 text-neutral-500">{e.allDay ? "Journée" : `${fmtTime(e.start)}–${fmtTime(e.end)}`}</span>
-                <span className="flex-1 truncate">{e.title}{e.aiAdded && <span className="ml-2 rounded bg-purple-100 px-1 text-xs text-purple-900">ajouté par l'IA</span>}</span>
+                <span className="w-24 shrink-0 text-neutral-500">{e.allDay ? tr("Journée") : `${fmtTime(e.start)}–${fmtTime(e.end)}`}</span>
+                <span className="flex-1 truncate">{e.title}{e.aiAdded && <span className="ml-2 rounded bg-purple-100 px-1 text-xs text-purple-900">{tr("ajouté par l'IA")}</span>}</span>
                 <span className="truncate text-xs text-neutral-500">{e.location}</span>
               </button></li>
             ))}
@@ -178,7 +179,7 @@ function EventDialog({ ev, draft, onClose, onSaved }: { ev: Ev | null; draft: nu
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onMouseDown={onClose}>
-      <div role="dialog" aria-modal="true" aria-label={ev ? "Événement" : "Nouvel événement"} onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === "Escape" && onClose()}
+      <div role="dialog" aria-modal="true" aria-label={ev ? tr("Événement") : tr("Nouvel événement")} onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === "Escape" && onClose()}
         className="w-[420px] max-w-[92vw] space-y-3 rounded-xl border border-neutral-200 bg-white p-5 shadow-2xl dark:border-neutral-700 dark:bg-neutral-900">
         {!editing && ev ? (
           <>
@@ -186,29 +187,29 @@ function EventDialog({ ev, draft, onClose, onSaved }: { ev: Ev | null; draft: nu
             <p className="text-sm">{ev.allDay ? fmtDay(new Date(ev.start), { dateStyle: "full" }) : `${fmtDay(new Date(ev.start), { dateStyle: "full" })}, ${fmtTime(ev.start)}–${fmtTime(ev.end)}`}</p>
             {ev.location && <p className="text-sm">📍 {ev.location}</p>}
             {ev.description && <p className="whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">{ev.description}</p>}
-            {ev.pushError && <p role="alert" className="text-xs text-red-600">Écriture vers l'agenda distant impossible : {ev.pushError}</p>}
+            {ev.pushError && <p role="alert" className="text-xs text-red-600">{tr("Écriture vers l'agenda distant impossible :")} {ev.pushError}</p>}
             <p className="text-xs text-neutral-500">
-              {ev.aiAdded ? `✨ Ajouté par l'IA${ev.confidence != null ? ` (confiance ${Math.round(ev.confidence * 100)} %)` : ""}` : ev.source === "local" ? "Créé dans ASSISTANT" : `Agenda synchronisé (${ev.source})${ev.writable ? "" : " — lecture seule"}`}{ev.remoteId && (ev.source === "local" || ev.source === "ai") ? " · écrit dans votre agenda" : ""}
-              {ev.link && ev.link.startsWith("https://") && <> · <a className="underline" href={ev.link} target="_blank" rel="noreferrer noopener">Ouvrir dans Google</a></>}
+              {ev.aiAdded ? tr("✨ Ajouté par l'IA{0}", ev.confidence != null ? ` (confiance ${Math.round(ev.confidence * 100)} %)` : "") : ev.source === "local" ? tr("Créé dans ASSISTANT") : tr("Agenda synchronisé ({0}){1}", ev.source, ev.writable ? "" : " — lecture seule")}{ev.remoteId && (ev.source === "local" || ev.source === "ai") ? tr(" · écrit dans votre agenda") : ""}
+              {ev.link && ev.link.startsWith("https://") && <> · <a className="underline" href={ev.link} target="_blank" rel="noreferrer noopener">{tr("Ouvrir dans Google")}</a></>}
             </p>
             <div className="flex justify-end gap-2">
-              {editable && <button className={btn} onClick={async () => { if (confirm("Supprimer cet événement ?")) { await rpc("calendar.delete", { id: ev.id }); onSaved(); onClose(); } }}>Supprimer</button>}
-              {editable && <button className={btn} onClick={() => setEditing(true)}>Modifier</button>}
-              <button className={btn} onClick={onClose}>Fermer</button>
+              {editable && <button className={btn} onClick={async () => { if (confirm(tr("Supprimer cet événement ?"))) { await rpc("calendar.delete", { id: ev.id }); onSaved(); onClose(); } }}>{tr("Supprimer")}</button>}
+              {editable && <button className={btn} onClick={() => setEditing(true)}>{tr("Modifier")}</button>}
+              <button className={btn} onClick={onClose}>{tr("Fermer")}</button>
             </div>
           </>
         ) : (
           <>
-            <input autoFocus aria-label="Titre" placeholder="Titre" className={`${input} w-full text-base`} value={title} onChange={(e) => setTitle(e.target.value)} />
+            <input autoFocus aria-label={tr("Titre")} placeholder={tr("Titre")} className={`${input} w-full text-base`} value={title} onChange={(e) => setTitle(e.target.value)} />
             <div className="flex flex-wrap items-center gap-2">
-              <input type="date" aria-label="Date" className={input} value={date} onChange={(e) => setDate(e.target.value)} />
-              {!allDay && <><input type="time" aria-label="Début" className={input} value={start} onChange={(e) => setStart(e.target.value)} /><span>→</span><input type="time" aria-label="Fin" className={input} value={end} onChange={(e) => setEnd(e.target.value)} /></>}
-              <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} /> Journée entière</label>
+              <input type="date" aria-label={tr("Date")} className={input} value={date} onChange={(e) => setDate(e.target.value)} />
+              {!allDay && <><input type="time" aria-label={tr("Début")} className={input} value={start} onChange={(e) => setStart(e.target.value)} /><span>→</span><input type="time" aria-label={tr("Fin")} className={input} value={end} onChange={(e) => setEnd(e.target.value)} /></>}
+              <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} /> {tr("Journée entière")}</label>
             </div>
-            <input aria-label="Lieu" placeholder="Lieu" className={`${input} w-full`} value={location} onChange={(e) => setLocation(e.target.value)} />
-            <textarea aria-label="Description" placeholder="Description" rows={3} className={`${input} w-full`} value={description} onChange={(e) => setDescription(e.target.value)} />
+            <input aria-label={tr("Lieu")} placeholder={tr("Lieu")} className={`${input} w-full`} value={location} onChange={(e) => setLocation(e.target.value)} />
+            <textarea aria-label={tr("Description")} placeholder={tr("Description")} rows={3} className={`${input} w-full`} value={description} onChange={(e) => setDescription(e.target.value)} />
             {err && <p role="alert" className="text-sm text-red-600">{err}</p>}
-            <div className="flex justify-end gap-2"><button className={btn} onClick={onClose}>Annuler</button><button className={`${btn} font-medium`} onClick={save}>Enregistrer</button></div>
+            <div className="flex justify-end gap-2"><button className={btn} onClick={onClose}>{tr("Annuler")}</button><button className={`${btn} font-medium`} onClick={save}>{tr("Enregistrer")}</button></div>
           </>
         )}
       </div>
@@ -250,18 +251,18 @@ export function CalendarPage({ openAt }: { openAt?: number | null }) {
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <button className={btn} onClick={() => setAnchor(new Date())}>Aujourd'hui</button>
-        <button className={btn} aria-label="Précédent" onClick={() => step(-1)}>←</button>
-        <button className={btn} aria-label="Suivant" onClick={() => step(1)}>→</button>
+        <button className={btn} onClick={() => setAnchor(new Date())}>{tr("Aujourd'hui")}</button>
+        <button className={btn} aria-label={tr("Précédent")} onClick={() => step(-1)}>←</button>
+        <button className={btn} aria-label={tr("Suivant")} onClick={() => step(1)}>→</button>
         <h2 className="mx-2 text-base font-medium capitalize">{title}</h2>
-        {syncing && <span role="status" className="text-xs text-amber-600">synchronisation…</span>}
-        <div className="ml-auto flex gap-1" role="group" aria-label="Vue">
+        {syncing && <span role="status" className="text-xs text-amber-600">{tr("synchronisation…")}</span>}
+        <div className="ml-auto flex gap-1" role="group" aria-label={tr("Vue")}>
           {([["day", "Jour"], ["week", "Semaine"], ["month", "Mois"], ["agenda", "Agenda"]] as const).map(([v, l]) => (
             <button key={v} aria-pressed={view === v} onClick={() => setView(v)} className={`${btn} ${view === v ? "bg-neutral-100 font-medium dark:bg-neutral-800" : ""}`}>{l}</button>
           ))}
         </div>
-        <button className={btn} onClick={() => rpc("calendar.sync", {}).then(load)}>Synchroniser</button>
-        <button className={`${btn} font-medium`} onClick={() => setDraft(Date.now() - (Date.now() % 3600_000) + 3600_000)}>+ Nouvel événement</button>
+        <button className={btn} onClick={() => rpc("calendar.sync", {}).then(load)}>{tr("Synchroniser")}</button>
+        <button className={`${btn} font-medium`} onClick={() => setDraft(Date.now() - (Date.now() % 3600_000) + 3600_000)}>{tr("+ Nouvel événement")}</button>
       </div>
       {err && <p role="alert" className="mb-2 text-sm text-red-600">{err}</p>}
       {(view === "day" || view === "week") && <TimeGrid days={days} events={events} onOpen={setOpen} onCreate={setDraft} />}

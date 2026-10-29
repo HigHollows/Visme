@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { tr, locale } from "../i18n";
 import { listen } from "@tauri-apps/api/event";
 import { rpc, type Proposal } from "../rpc";
 
@@ -6,15 +7,15 @@ const btn = "rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neu
 const input = "rounded-md border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700";
 const pad = (n: number) => String(n).padStart(2, "0");
 const dt = (t: number) => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
-const fmt = (t: number, allDay?: boolean) => new Date(t).toLocaleString("fr-FR", allDay ? { dateStyle: "full" } : { dateStyle: "medium", timeStyle: "short" });
+const fmt = (t: number, allDay?: boolean) => new Date(t).toLocaleString(locale(), allDay ? { dateStyle: "full" } : { dateStyle: "medium", timeStyle: "short" });
 
 function describe(p: Proposal) {
   if (p.kind === "deadline") {
     const d = p.payload as { service?: string; amount?: number | null; currency?: string; nextDate?: number | null; cancelBy?: number | null };
-    return `💶 ${p.title}${d.nextDate ? ` — échéance le ${fmt(d.nextDate, true)}` : ""}${d.cancelBy ? ` · résilier avant le ${fmt(d.cancelBy, true)}` : ""}`;
+    return `💶 ${p.title}${d.nextDate ? tr(" — échéance le {0}", fmt(d.nextDate, true)) : ""}${d.cancelBy ? tr(" · résilier avant le {0}", fmt(d.cancelBy, true)) : ""}`;
   }
   if (p.kind === "event") return `📅 ${p.payload.title ?? p.title} — ${p.payload.start ? fmt(p.payload.start, p.payload.allDay) : ""}${p.payload.location ? ` · ${p.payload.location}` : ""}`;
-  return `☑ ${p.title}${p.payload.due ? ` — pour le ${fmt(p.payload.due, true)}` : ""}`;
+  return `☑ ${p.title}${p.payload.due ? tr(" — pour le {0}", fmt(p.payload.due, true)) : ""}`;
 }
 
 function EditDialog({ p, onClose, onSave }: { p: Proposal; onClose: () => void; onSave: (edits: Record<string, unknown>) => void }) {
@@ -37,21 +38,21 @@ function EditDialog({ p, onClose, onSave }: { p: Proposal; onClose: () => void; 
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onMouseDown={onClose}>
-      <div role="dialog" aria-modal="true" aria-label="Modifier la suggestion" onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === "Escape" && onClose()}
+      <div role="dialog" aria-modal="true" aria-label={tr("Modifier la suggestion")} onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === "Escape" && onClose()}
         className="w-[420px] max-w-[92vw] space-y-3 rounded-xl border border-neutral-200 bg-white p-5 shadow-2xl dark:border-neutral-700 dark:bg-neutral-900">
-        <input autoFocus aria-label="Titre" className={`${input} w-full`} value={title} onChange={(e) => setTitle(e.target.value)} />
+        <input autoFocus aria-label={tr("Titre")} className={`${input} w-full`} value={title} onChange={(e) => setTitle(e.target.value)} />
         {p.kind === "deadline" ? (
           <div className="flex flex-wrap gap-3 text-sm">
-            <label>Échéance<br /><input type="date" className={input} value={nextDate} onChange={(e) => setNextDate(e.target.value)} /></label>
-            <label>Résilier avant<br /><input type="date" className={input} value={cancelBy} onChange={(e) => setCancelBy(e.target.value)} /></label>
+            <label>{tr("Échéance")}<br /><input type="date" className={input} value={nextDate} onChange={(e) => setNextDate(e.target.value)} /></label>
+            <label>{tr("Résilier avant")}<br /><input type="date" className={input} value={cancelBy} onChange={(e) => setCancelBy(e.target.value)} /></label>
           </div>
         ) : p.kind === "event" ? (
           <div className="flex flex-wrap items-center gap-2">
-            <input type="datetime-local" aria-label="Début" className={input} value={start} onChange={(e) => setStart(e.target.value)} />→
-            <input type="datetime-local" aria-label="Fin" className={input} value={end} onChange={(e) => setEnd(e.target.value)} />
+            <input type="datetime-local" aria-label={tr("Début")} className={input} value={start} onChange={(e) => setStart(e.target.value)} />→
+            <input type="datetime-local" aria-label={tr("Fin")} className={input} value={end} onChange={(e) => setEnd(e.target.value)} />
           </div>
-        ) : <input type="date" aria-label="Échéance" className={input} value={due} onChange={(e) => setDue(e.target.value)} />}
-        <div className="flex justify-end gap-2"><button className={btn} onClick={onClose}>Annuler</button><button className={`${btn} font-medium`} onClick={save}>Accepter avec ces changements</button></div>
+        ) : <input type="date" aria-label={tr("Échéance")} className={input} value={due} onChange={(e) => setDue(e.target.value)} />}
+        <div className="flex justify-end gap-2"><button className={btn} onClick={onClose}>{tr("Annuler")}</button><button className={`${btn} font-medium`} onClick={save}>{tr("Accepter avec ces changements")}</button></div>
       </div>
     </div>
   );
@@ -101,39 +102,39 @@ export function Inbox({ onOpenMail }: { onOpenMail: (id: string) => void }) {
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {(["pending", "decided"] as const).map((t) => (
-          <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)} className={`${btn} ${tab === t ? "bg-neutral-100 font-medium dark:bg-neutral-800" : ""}`}>{t === "pending" ? "En attente" : "Historique"}</button>
+          <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)} className={`${btn} ${tab === t ? "bg-neutral-100 font-medium dark:bg-neutral-800" : ""}`}>{t === "pending" ? tr("En attente") : tr("Historique")}</button>
         ))}
         {tab === "pending" && items.length > 0 && (
           <>
-            <button className={btn} onClick={() => setSel(sel.size === items.length ? new Set() : new Set(items.map((i) => i.id)))}>{sel.size === items.length ? "Tout désélectionner" : "Tout sélectionner"}</button>
-            <button className={btn} disabled={!sel.size} onClick={() => accept([...sel])}>Accepter la sélection ({sel.size})</button>
-            <button className={btn} disabled={!sel.size} onClick={() => reject([...sel])}>Refuser la sélection</button>
-            <span className="ml-auto text-xs text-neutral-500">↑↓ naviguer · A accepter · R refuser · E modifier · Espace sélectionner</span>
+            <button className={btn} onClick={() => setSel(sel.size === items.length ? new Set() : new Set(items.map((i) => i.id)))}>{sel.size === items.length ? tr("Tout désélectionner") : tr("Tout sélectionner")}</button>
+            <button className={btn} disabled={!sel.size} onClick={() => accept([...sel])}>{tr("Accepter la sélection (")}{sel.size})</button>
+            <button className={btn} disabled={!sel.size} onClick={() => reject([...sel])}>{tr("Refuser la sélection")}</button>
+            <span className="ml-auto text-xs text-neutral-500">{tr("↑↓ naviguer · A accepter · R refuser · E modifier · Espace sélectionner")}</span>
           </>
         )}
       </div>
       {err && <p role="alert" className="mb-2 text-sm text-red-600">{err}</p>}
-      {items.length === 0 && <p className="text-sm text-neutral-500">{tab === "pending" ? "Rien à valider pour l'instant 🎉" : "Aucune décision pour l'instant."}</p>}
-      <ul ref={list} tabIndex={0} onKeyDown={onKey} aria-label="Suggestions" className="space-y-2 outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+      {items.length === 0 && <p className="text-sm text-neutral-500">{tab === "pending" ? tr("Rien à valider pour l'instant 🎉") : tr("Aucune décision pour l'instant.")}</p>}
+      <ul ref={list} tabIndex={0} onKeyDown={onKey} aria-label={tr("Suggestions")} className="space-y-2 outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
         {items.map((p, i) => (
           <li key={p.id} aria-current={i === cur && tab === "pending"} onClick={() => setCur(i)}
             className={`rounded-md border p-3 ${i === cur && tab === "pending" ? "border-blue-500" : "border-neutral-200 dark:border-neutral-800"}`}>
             <div className="flex items-start gap-3">
-              {tab === "pending" && <input type="checkbox" aria-label="Sélectionner" checked={sel.has(p.id)} onChange={() => setSel((s) => { const n = new Set(s); n.has(p.id) ? n.delete(p.id) : n.add(p.id); return n; })} className="mt-1" />}
+              {tab === "pending" && <input type="checkbox" aria-label={tr("Sélectionner")} checked={sel.has(p.id)} onChange={() => setSel((s) => { const n = new Set(s); n.has(p.id) ? n.delete(p.id) : n.add(p.id); return n; })} className="mt-1" />}
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{describe(p)}</div>
-                <div className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400">Pourquoi : {p.reason}</div>
+                <div className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400">{tr("Pourquoi :")} {p.reason}</div>
                 <div className="mt-0.5 text-xs text-neutral-500">
-                  Confiance {Math.round(p.confidence * 100)} %{p.confidence < 0.6 && " (faible)"}
-                  {p.sourceRef?.type === "mail" && <> · <button className="underline" onClick={() => onOpenMail(p.sourceRef!.id)}>voir le mail</button></>}
-                  {tab === "decided" && <> · {p.status === "accepted" ? "✅ accepté" : p.status === "auto" ? "🤖 ajouté automatiquement" : "❌ refusé"}</>}
+                  {tr("Confiance")} {Math.round(p.confidence * 100)} %{p.confidence < 0.6 && tr(" (faible)")}
+                  {p.sourceRef?.type === "mail" && <> · <button className="underline" onClick={() => onOpenMail(p.sourceRef!.id)}>{tr("voir le mail")}</button></>}
+                  {tab === "decided" && <> · {p.status === "accepted" ? tr("✅ accepté") : p.status === "auto" ? tr("🤖 ajouté automatiquement") : tr("❌ refusé")}</>}
                 </div>
               </div>
               {tab === "pending" && (
                 <div className="flex shrink-0 gap-1">
-                  <button className={btn} onClick={() => accept([p.id])}>Accepter</button>
-                  <button className={btn} onClick={() => setEditing(p)}>Modifier</button>
-                  <button className={btn} onClick={() => reject([p.id])}>Refuser</button>
+                  <button className={btn} onClick={() => accept([p.id])}>{tr("Accepter")}</button>
+                  <button className={btn} onClick={() => setEditing(p)}>{tr("Modifier")}</button>
+                  <button className={btn} onClick={() => reject([p.id])}>{tr("Refuser")}</button>
                 </div>
               )}
             </div>

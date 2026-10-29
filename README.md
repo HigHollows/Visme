@@ -10,15 +10,16 @@ Assistant personnel IA de bureau (macOS 12+ et Windows 10/11). Il se connecte à
 
 | | |
 |---|---|
-| **Mails** | Gmail (OAuth2 PKCE), lecture seule, synchro incrémentale, tri/résumé/extraction par IA, brouillons de réponse dans votre style |
-| **Calendrier** | Google Calendar, vues jour/semaine/mois/agenda, événements locaux, ajouts de l'IA marqués « ajouté par l'IA » avec source et confiance |
-| **Documents** | PDF, DOCX, XLSX, PPTX, TXT, MD, CSV, images (OCR par modèle vision), dossiers surveillés, recherche hybride (mots-clés + sémantique) |
+| **Comptes** | Google (Gmail, Agenda), Microsoft (Outlook, Microsoft 365), IMAP/SMTP, CalDAV ; OAuth2 PKCE ou mot de passe d'application ; identifiants dans la base chiffrée |
+| **Mails** | Synchro incrémentale, tri/résumé/extraction par IA, brouillons de réponse dans votre style, envoi optionnel (désactivé par défaut, confirmation à chaque message), pièces jointes lues et indexées (PDF scannés compris) |
+| **Calendrier** | Google, Microsoft, CalDAV ; écriture optionnelle des événements créés dans ASSISTANT ; vues jour/semaine/mois/agenda, événements locaux, ajouts de l'IA marqués « ajouté par l'IA » avec source et confiance |
+| **Documents** | PDF (y compris scannés, via un modèle capable de lire les PDF), DOCX, XLSX, PPTX, TXT, MD, CSV, images (OCR par modèle vision), dossiers surveillés, recherche hybride (mots-clés + sémantique) |
 | **Agent** | Boucle d'arrière-plan : synchro → analyse → classement → actions, file d'attente, reprise sur limite de débit, résumé du jour et de la semaine |
 | **Chat** | Streaming, sources citées, préréglages éditables, `/resume` `/traduis` `/agenda` `/cherche` `/tache`, mentions `@`, outils qui *proposent* |
 | **Mémoire** | Graphe de connaissances (personnes, organisations, mails, documents, événements, tâches…), édition manuelle, « oubli ciblé » |
 | **Plugins** | Manifeste + permissions explicites, exécution isolée, SDK documenté ([docs/plugins.md](docs/plugins.md)), plugin officiel Graphify |
 | **Échéances** | Factures, abonnements, contrats, garanties… : alertes 30/7/1 jours, total mensuel/annuel, doublons, hausses de prix |
-| **Réunions** | Enregistrement (consentement), import audio/vidéo, transcription par API avec interlocuteurs, compte-rendu, actions → tâches, rendez-vous → agenda, suppression de l'audio |
+| **Réunions** | Enregistrement micro + son système des visioconférences (consentement), import audio/vidéo, transcription par API avec interlocuteurs, compte-rendu, actions → tâches, rendez-vous → agenda, suppression de l'audio |
 | **Capture rapide** | Raccourci global → fenêtre flottante : texte, image, fichier, presse-papiers, note vocale, « dis-moi quoi en faire » |
 | **Profils** | Pro / Perso / Association… totalement isolés (base, comptes, clés, mémoire, style, plafonds), changement rapide, vue combinée en lecture seule |
 | **Confidentialité** | Masquage IBAN/cartes/mots de passe avant envoi, verrouillage par mot de passe, export RGPD, effacement total, journal d'audit |
@@ -48,10 +49,11 @@ Anthropic ne propose ni embeddings ni transcription : configurez ces deux tâche
 
 ## Limites connues et feuille de route
 
-- **Comptes** : Gmail et Google Agenda uniquement (lecture seule). À venir : Outlook/Microsoft 365, IMAP/SMTP, CalDAV, écriture vers l'agenda, envoi de brouillons.
-- **Pièces jointes** des mails : listées, pas encore lues par le pipeline de documents. **PDF scannés** : non gérés (les images le sont, via OCR).
-- **Réunions** : micro uniquement (audio système via un périphérique de bouclage) ; fichiers audio ≤ 25 Mo.
-- **Verrouillage** : mot de passe seulement (pas de biométrie). **Langue** de l'interface : français.
+- **Comptes** : Google, Microsoft, IMAP/SMTP et CalDAV sont pris en charge ; ces connecteurs ont été testés contre des serveurs simulés (et un vrai SMTP local), pas contre tous les fournisseurs réels. Vous devez créer votre propre application OAuth (Google, Microsoft) — voir Settings → Comptes.
+- **PDF scannés** : lus par le modèle de l'IA (≤ 60 pages, 10 par requête) ; nécessite un fournisseur qui accepte les PDF (Claude, GPT).
+- **Réunions** : l'audio système utilise WASAPI loopback (Windows) et une capture CoreAudio (macOS ≥ 14.6) ; non testé sur machines réelles ici. Fichiers audio ≤ 25 Mo.
+- **Verrouillage** : mot de passe seulement (pas de biométrie).
+- **Langues** : interface en français et en anglais (Settings → Général) ; `pnpm i18n:check` vérifie la couverture. Les réponses de l'IA suivent la langue du préréglage.
 - **Plugins** : bac à sable applicatif, pas une isolation au niveau de l'OS ([docs/security.md](docs/security.md)).
 - **Windows** : build et test de fumée prévus en CI ; la suite de tests complète n'y a pas encore été validée.
 - **Installateurs non signés** (voir Installation) — [docs/release.md](docs/release.md) décrit le passage à des builds signés.

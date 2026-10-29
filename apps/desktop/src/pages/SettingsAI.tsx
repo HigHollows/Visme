@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { tr } from "../i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { rpc, TASKS, type AiStatus, type AppSettings, type Kind, type TaskRoute } from "../rpc";
 
@@ -23,7 +24,7 @@ export function SettingsAI() {
     refreshStatus().catch((e) => setMsg(String(e)));
   }, [refreshStatus]);
 
-  if (!settings) return <p className="text-sm text-neutral-500">{msg || "Chargement…"}</p>;
+  if (!settings) return <p className="text-sm text-neutral-500">{msg || tr("Chargement…")}</p>;
   const ai = settings.ai;
   const providerIds = Object.keys(ai.providers);
 
@@ -38,10 +39,10 @@ export function SettingsAI() {
     try {
       setSettings(await rpc<AppSettings>("settings.set", { settings }));
       setDirty(false);
-      setMsg("Réglages enregistrés.");
+      setMsg(tr("Réglages enregistrés."));
       await refreshStatus();
     } catch (e) {
-      setMsg(`Erreur : ${e}`);
+      setMsg(tr("Erreur : {0}", e));
     }
   };
 
@@ -49,7 +50,7 @@ export function SettingsAI() {
     await invoke("secret_set", { provider: id, key: keys[id] ?? "" });
     setKeys((k) => ({ ...k, [id]: "" }));
     await refreshStatus();
-    setMsg(`Clé de « ${id} » enregistrée dans le trousseau système.`);
+    setMsg(tr("Clé de « {0} » enregistrée dans le trousseau système.", id));
   };
 
   const test = async (id: string) => {
@@ -65,8 +66,8 @@ export function SettingsAI() {
 
   const addProvider = () => {
     const id = np.id.trim();
-    if (!/^[a-z0-9_-]+$/i.test(id) || ai.providers[id]) return setMsg("Identifiant invalide ou déjà utilisé.");
-    if (np.kind === "openai_compatible" && !np.baseUrl) return setMsg("URL de base requise.");
+    if (!/^[a-z0-9_-]+$/i.test(id) || ai.providers[id]) return setMsg(tr("Identifiant invalide ou déjà utilisé."));
+    if (np.kind === "openai_compatible" && !np.baseUrl) return setMsg(tr("URL de base requise."));
     patch((a) => {
       a.providers[id] = { kind: np.kind, ...(np.baseUrl && { baseUrl: np.baseUrl }) };
     });
@@ -88,9 +89,9 @@ export function SettingsAI() {
   return (
     <div className="max-w-3xl space-y-8">
       <section aria-labelledby="prov">
-        <h2 id="prov" className="mb-2 text-lg font-medium">Fournisseurs et clés API</h2>
+        <h2 id="prov" className="mb-2 text-lg font-medium">{tr("Fournisseurs et clés API")}</h2>
         <p className="mb-3 text-sm text-neutral-500">
-          Les clés sont stockées dans le trousseau du système et ne sont jamais relues par l'interface.
+          {tr("Les clés sont stockées dans le trousseau du système et ne sont jamais relues par l'interface.")}
         </p>
         <ul className="space-y-3">
           {providerIds.map((id) => {
@@ -101,24 +102,24 @@ export function SettingsAI() {
                 <div className="flex flex-wrap items-center gap-2">
                   <strong className="text-sm">{id}</strong>
                   <span className="text-xs text-neutral-500">{ai.providers[id]!.kind}{ai.providers[id]!.baseUrl ? ` · ${ai.providers[id]!.baseUrl}` : ""}</span>
-                  <span className={`text-xs ${has ? "text-green-600" : "text-amber-600"}`}>{has ? "clé enregistrée" : "aucune clé"}</span>
-                  <button className={`${btn} ml-auto`} onClick={() => patch((a) => { delete a.providers[id]; })}>Retirer</button>
+                  <span className={`text-xs ${has ? "text-green-600" : "text-amber-600"}`}>{has ? tr("clé enregistrée") : tr("aucune clé")}</span>
+                  <button className={`${btn} ml-auto`} onClick={() => patch((a) => { delete a.providers[id]; })}>{tr("Retirer")}</button>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <input
                     type="password"
                     autoComplete="off"
-                    aria-label={`Clé API ${id}`}
-                    placeholder={has ? "•••••••• (remplacer)" : "Coller la clé API"}
+                    aria-label={tr("Clé API {0}", id)}
+                    placeholder={has ? tr("•••••••• (remplacer)") : tr("Coller la clé API")}
                     className={`${input} w-72`}
                     value={keys[id] ?? ""}
                     onChange={(e) => setKeys((k) => ({ ...k, [id]: e.target.value }))}
                   />
-                  <button className={btn} disabled={!keys[id]} onClick={() => saveKey(id)}>Enregistrer la clé</button>
-                  {has && <button className={btn} onClick={() => invoke("secret_set", { provider: id, key: "" }).then(refreshStatus)}>Supprimer la clé</button>}
-                  <button className={btn} onClick={() => test(id)}>Tester la connexion</button>
+                  <button className={btn} disabled={!keys[id]} onClick={() => saveKey(id)}>{tr("Enregistrer la clé")}</button>
+                  {has && <button className={btn} onClick={() => invoke("secret_set", { provider: id, key: "" }).then(refreshStatus)}>{tr("Supprimer la clé")}</button>}
+                  <button className={btn} onClick={() => test(id)}>{tr("Tester la connexion")}</button>
                   <span role="status" className="text-sm">
-                    {t === "pending" ? "Test en cours…" : t ? (t.ok ? "✅ Connexion réussie" : `❌ ${t.error}`) : ""}
+                    {t === "pending" ? tr("Test en cours…") : t ? (t.ok ? tr("✅ Connexion réussie") : `❌ ${t.error}`) : ""}
                   </span>
                 </div>
               </li>
@@ -126,26 +127,26 @@ export function SettingsAI() {
           })}
         </ul>
         <div className="mt-3 flex flex-wrap items-end gap-2">
-          <label className="text-xs">Identifiant<br /><input className={`${input} w-32`} value={np.id} onChange={(e) => setNp({ ...np, id: e.target.value })} /></label>
-          <label className="text-xs">Type<br />
+          <label className="text-xs">{tr("Identifiant")}<br /><input className={`${input} w-32`} value={np.id} onChange={(e) => setNp({ ...np, id: e.target.value })} /></label>
+          <label className="text-xs">{tr("Type")}<br />
             <select className={input} value={np.kind} onChange={(e) => setNp({ ...np, kind: e.target.value as Kind })}>
-              <option value="anthropic">Anthropic (Claude)</option>
-              <option value="openai">OpenAI (GPT)</option>
-              <option value="openai_compatible">Compatible OpenAI</option>
+              <option value="anthropic">{tr("Anthropic (Claude)")}</option>
+              <option value="openai">{tr("OpenAI (GPT)")}</option>
+              <option value="openai_compatible">{tr("Compatible OpenAI")}</option>
             </select>
           </label>
           {np.kind !== "anthropic" && (
-            <label className="text-xs">URL de base{np.kind === "openai" ? " (optionnel)" : ""}<br /><input className={`${input} w-64`} placeholder="https://…/v1" value={np.baseUrl} onChange={(e) => setNp({ ...np, baseUrl: e.target.value })} /></label>
+            <label className="text-xs">{tr("URL de base")}{np.kind === "openai" ? tr(" (optionnel)") : ""}<br /><input className={`${input} w-64`} placeholder={tr("https://…/v1")} value={np.baseUrl} onChange={(e) => setNp({ ...np, baseUrl: e.target.value })} /></label>
           )}
-          <button className={btn} onClick={addProvider}>Ajouter</button>
+          <button className={btn} onClick={addProvider}>{tr("Ajouter")}</button>
         </div>
       </section>
 
       <section aria-labelledby="routes">
-        <h2 id="routes" className="mb-2 text-lg font-medium">Modèle par tâche</h2>
+        <h2 id="routes" className="mb-2 text-lg font-medium">{tr("Modèle par tâche")}</h2>
         <table className="w-full text-sm">
           <thead className="text-left text-xs text-neutral-500">
-            <tr><th className="py-1">Tâche</th><th>Fournisseur / modèle</th><th>Secours (optionnel)</th></tr>
+            <tr><th className="py-1">{tr("Tâche")}</th><th>{tr("Fournisseur / modèle")}</th><th>{tr("Secours (optionnel)")}</th></tr>
           </thead>
           <tbody>
             {TASKS.map((t) => {
@@ -154,18 +155,18 @@ export function SettingsAI() {
                 <tr key={t.id} className="border-t border-neutral-200 align-top dark:border-neutral-800">
                   <td className="py-2 pr-2">{t.label}<div className="text-xs text-neutral-500">{t.hint}</div></td>
                   <td className="py-2 pr-2">
-                    <select aria-label={`Fournisseur ${t.label}`} className={input} value={r?.primary.provider ?? ""} onChange={(e) => setRoute(t.id, "primary", "provider", e.target.value)}>
+                    <select aria-label={tr("Fournisseur {0}", t.label)} className={input} value={r?.primary.provider ?? ""} onChange={(e) => setRoute(t.id, "primary", "provider", e.target.value)}>
                       <option value="" disabled>—</option>
                       {providerIds.map((id) => <option key={id}>{id}</option>)}
                     </select>{" "}
-                    <input aria-label={`Modèle ${t.label}`} className={`${input} w-44`} placeholder="modèle" value={r?.primary.model ?? ""} onChange={(e) => setRoute(t.id, "primary", "model", e.target.value)} />
+                    <input aria-label={tr("Modèle {0}", t.label)} className={`${input} w-44`} placeholder={tr("modèle")} value={r?.primary.model ?? ""} onChange={(e) => setRoute(t.id, "primary", "model", e.target.value)} />
                   </td>
                   <td className="py-2">
-                    <select aria-label={`Fournisseur de secours ${t.label}`} className={input} value={r?.fallback?.provider ?? ""} onChange={(e) => setRoute(t.id, "fallback", "provider", e.target.value)}>
-                      <option value="">aucun</option>
+                    <select aria-label={tr("Fournisseur de secours {0}", t.label)} className={input} value={r?.fallback?.provider ?? ""} onChange={(e) => setRoute(t.id, "fallback", "provider", e.target.value)}>
+                      <option value="">{tr("aucun")}</option>
                       {providerIds.map((id) => <option key={id}>{id}</option>)}
                     </select>{" "}
-                    {r?.fallback && <input aria-label={`Modèle de secours ${t.label}`} className={`${input} w-44`} placeholder="modèle" value={r.fallback.model} onChange={(e) => setRoute(t.id, "fallback", "model", e.target.value)} />}
+                    {r?.fallback && <input aria-label={tr("Modèle de secours {0}", t.label)} className={`${input} w-44`} placeholder={tr("modèle")} value={r.fallback.model} onChange={(e) => setRoute(t.id, "fallback", "model", e.target.value)} />}
                   </td>
                 </tr>
               );
@@ -175,19 +176,19 @@ export function SettingsAI() {
       </section>
 
       <section aria-labelledby="cost">
-        <h2 id="cost" className="mb-2 text-lg font-medium">Coûts et confidentialité</h2>
+        <h2 id="cost" className="mb-2 text-lg font-medium">{tr("Coûts et confidentialité")}</h2>
         <div className="space-y-2 text-sm">
-          <p>Dépense : <strong>{status?.usage.todayUsd.toFixed(4) ?? "…"} $</strong> aujourd'hui · <strong>{status?.usage.monthUsd.toFixed(4) ?? "…"} $</strong> ce mois-ci</p>
-          <label className="mr-4">Plafond journalier ($) <input type="number" min="0" step="0.5" className={`${input} w-24`} value={ai.limits.dailyUsd ?? ""} onChange={(e) => patch((a) => { a.limits.dailyUsd = num(e.target.value) || undefined; })} /></label>
-          <label>Plafond mensuel ($) <input type="number" min="0" step="1" className={`${input} w-24`} value={ai.limits.monthlyUsd ?? ""} onChange={(e) => patch((a) => { a.limits.monthlyUsd = num(e.target.value) || undefined; })} /></label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={ai.redactSensitive} onChange={(e) => patch((a) => { a.redactSensitive = e.target.checked; })} /> Masquer les données sensibles (IBAN, cartes, mots de passe, clés) avant envoi</label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={ai.economyMode} onChange={(e) => patch((a) => { a.economyMode = e.target.checked; })} /> Mode économique</label>
+          <p>{tr("Dépense :")} <strong>{status?.usage.todayUsd.toFixed(4) ?? "…"} $</strong> {tr("aujourd'hui ·")} <strong>{status?.usage.monthUsd.toFixed(4) ?? "…"} $</strong> {tr("ce mois-ci")}</p>
+          <label className="mr-4">{tr("Plafond journalier ($)")} <input type="number" min="0" step="0.5" className={`${input} w-24`} value={ai.limits.dailyUsd ?? ""} onChange={(e) => patch((a) => { a.limits.dailyUsd = num(e.target.value) || undefined; })} /></label>
+          <label>{tr("Plafond mensuel ($)")} <input type="number" min="0" step="1" className={`${input} w-24`} value={ai.limits.monthlyUsd ?? ""} onChange={(e) => patch((a) => { a.limits.monthlyUsd = num(e.target.value) || undefined; })} /></label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={ai.redactSensitive} onChange={(e) => patch((a) => { a.redactSensitive = e.target.checked; })} /> {tr("Masquer les données sensibles (IBAN, cartes, mots de passe, clés) avant envoi")}</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={ai.economyMode} onChange={(e) => patch((a) => { a.economyMode = e.target.checked; })} /> {tr("Mode économique")}</label>
         </div>
       </section>
 
       <div className="sticky bottom-0 flex items-center gap-3 bg-white/90 py-3 dark:bg-neutral-950/90">
-        <button className={`${btn} font-medium`} disabled={!dirty} onClick={save}>Enregistrer les réglages</button>
-        <span role="status" className="text-sm text-neutral-500">{dirty ? "Modifications non enregistrées" : msg}</span>
+        <button className={`${btn} font-medium`} disabled={!dirty} onClick={save}>{tr("Enregistrer les réglages")}</button>
+        <span role="status" className="text-sm text-neutral-500">{dirty ? tr("Modifications non enregistrées") : msg}</span>
       </div>
     </div>
   );

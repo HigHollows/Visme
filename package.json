@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json && pnpm --filter @assistant/desktop exec tsc --noEmit",
     "build:engine": "node scripts/build-sidecar.mjs",
     "smoke:engine": "node scripts/smoke-sidecar.mjs",
+    "i18n:check": "node scripts/i18n-check.mjs",
     "dev": "pnpm --filter @assistant/desktop tauri dev",
     "build:app": "node scripts/build-sidecar.mjs && pnpm --filter @assistant/desktop tauri build"
   },

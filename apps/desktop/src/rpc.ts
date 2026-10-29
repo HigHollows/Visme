@@ -1,3 +1,4 @@
+import { tr } from "./i18n";
 import { invoke } from "@tauri-apps/api/core";
 
 export const rpc = <T,>(method: string, params?: unknown) => invoke<T>("rpc", { method, params });
@@ -21,14 +22,14 @@ export interface AiStatus {
 }
 
 export const TASKS: { id: string; label: string; hint: string }[] = [
-  { id: "triage", label: "Tri des mails", hint: "modèle économique" },
-  { id: "extraction", label: "Extraction (dates, montants)", hint: "économique" },
-  { id: "summary", label: "Résumés", hint: "intermédiaire" },
-  { id: "chat", label: "Chat", hint: "modèle puissant" },
-  { id: "draft", label: "Rédaction de brouillons", hint: "modèle puissant" },
-  { id: "embedding", label: "Embeddings", hint: "OpenAI ou compatible" },
-  { id: "ocr", label: "OCR (vision)", hint: "modèle avec vision" },
-  { id: "stt", label: "Transcription audio", hint: "OpenAI ou compatible" },
+  { id: "triage", label: tr("Tri des mails"), hint: tr("modèle économique") },
+  { id: "extraction", label: tr("Extraction (dates, montants)"), hint: tr("économique") },
+  { id: "summary", label: tr("Résumés"), hint: tr("intermédiaire") },
+  { id: "chat", label: tr("Chat"), hint: tr("modèle puissant") },
+  { id: "draft", label: tr("Rédaction de brouillons"), hint: tr("modèle puissant") },
+  { id: "embedding", label: tr("Embeddings"), hint: tr("OpenAI ou compatible") },
+  { id: "ocr", label: tr("OCR (vision)"), hint: tr("modèle avec vision") },
+  { id: "stt", label: tr("Transcription audio"), hint: tr("OpenAI ou compatible") },
 ];
 
 export type Autonomy = "observe" | "propose" | "act_with_approval" | "act_alone";
@@ -41,7 +42,7 @@ export interface Proposal {
   sourceRef: { type: string; id: string } | null; createdAt: number; decidedAt: number | null;
 }
 export const CATEGORY_LABEL: Record<string, string> = {
-  important: "Important", to_reply: "À répondre", invoice: "Facture", newsletter: "Newsletter", spam: "Spam", pro: "Pro", perso: "Perso",
+  important: tr("Important"), to_reply: tr("À répondre"), invoice: tr("Facture"), newsletter: tr("Newsletter"), spam: tr("Spam"), pro: tr("Pro"), perso: tr("Perso"),
 };
 
 export interface Preset {
@@ -54,17 +55,17 @@ export interface StyleProfile {
   tone: string; signature: string; notes: string;
 }
 export const KIND_LABEL: Record<string, string> = {
-  invoice: "Facture", subscription: "Abonnement", contract: "Contrat", renewal: "Renouvellement",
-  warranty: "Garantie", tax: "Impôt", insurance: "Assurance", other: "Autre",
+  invoice: tr("Facture"), subscription: tr("Abonnement"), contract: tr("Contrat"), renewal: tr("Renouvellement"),
+  warranty: tr("Garantie"), tax: tr("Impôt"), insurance: tr("Assurance"), other: tr("Autre"),
 };
-export const PERIOD_LABEL: Record<string, string> = { weekly: "Hebdo", monthly: "Mensuel", quarterly: "Trimestriel", yearly: "Annuel", one_off: "Ponctuel" };
+export const PERIOD_LABEL: Record<string, string> = { weekly: tr("Hebdo"), monthly: tr("Mensuel"), quarterly: tr("Trimestriel"), yearly: tr("Annuel"), one_off: tr("Ponctuel") };
 export const PERMISSION_LABELS: Record<string, string> = {
-  ai: "Utiliser l'IA configurée (consomme du budget)",
-  "documents:read": "Lire vos documents (résumés et texte)",
-  "mail:read": "Lire vos mails",
-  "calendar:read": "Lire votre calendrier",
-  "memory:read": "Lire le graphe de mémoire",
-  "memory:write": "Ajouter des liens au graphe de mémoire",
-  propose: "Proposer des tâches/événements (toujours validés par vous)",
+  ai: tr("Utiliser l'IA configurée (consomme du budget)"),
+  "documents:read": tr("Lire vos documents (résumés et texte)"),
+  "mail:read": tr("Lire vos mails"),
+  "calendar:read": tr("Lire votre calendrier"),
+  "memory:read": tr("Lire le graphe de mémoire"),
+  "memory:write": tr("Ajouter des liens au graphe de mémoire"),
+  propose: tr("Proposer des tâches/événements (toujours validés par vous)"),
 };
-export const describePermission = (p: string) => (p.startsWith("net:") ? `Accéder au site ${p.slice(4)} (HTTPS uniquement)` : PERMISSION_LABELS[p] ?? p);
+export const describePermission = (p: string) => (p.startsWith("net:") ? tr("Accéder au site {0} (HTTPS uniquement)", p.slice(4)) : PERMISSION_LABELS[p] ?? p);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { tr, locale } from "../i18n";
 import { rpc } from "../rpc";
 
 interface Task {
@@ -30,37 +31,37 @@ export function Tasks({ onOpenMail }: { onOpenMail: (id: string) => void }) {
   const today = sod(new Date());
   const open = tasks.filter((t) => t.status === "open");
   const groups: [string, Task[]][] = [
-    ["En retard", open.filter((t) => t.due !== null && t.due < today)],
-    ["Aujourd'hui", open.filter((t) => t.due !== null && t.due >= today && t.due < today + 86_400_000)],
-    ["À venir", open.filter((t) => t.due !== null && t.due >= today + 86_400_000)],
-    ["Sans date", open.filter((t) => t.due === null)],
-    ["Terminées", tasks.filter((t) => t.status === "done").slice(0, 30)],
+    [tr("En retard"), open.filter((t) => t.due !== null && t.due < today)],
+    [tr("Aujourd'hui"), open.filter((t) => t.due !== null && t.due >= today && t.due < today + 86_400_000)],
+    [tr("À venir"), open.filter((t) => t.due !== null && t.due >= today + 86_400_000)],
+    [tr("Sans date"), open.filter((t) => t.due === null)],
+    [tr("Terminées"), tasks.filter((t) => t.status === "done").slice(0, 30)],
   ];
 
   return (
     <div className="max-w-3xl">
       <form className="mb-4 flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); void add(); }}>
-        <input aria-label="Nouvelle tâche" placeholder="Nouvelle tâche…" className={`${input} min-w-64 flex-1`} value={title} onChange={(e) => setTitle(e.target.value)} />
-        <input type="date" aria-label="Échéance" className={input} value={due} onChange={(e) => setDue(e.target.value)} />
-        <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={high} onChange={(e) => setHigh(e.target.checked)} /> Prioritaire</label>
-        <button type="submit" className={btn} disabled={!title.trim()}>Ajouter</button>
+        <input aria-label={tr("Nouvelle tâche")} placeholder={tr("Nouvelle tâche…")} className={`${input} min-w-64 flex-1`} value={title} onChange={(e) => setTitle(e.target.value)} />
+        <input type="date" aria-label={tr("Échéance")} className={input} value={due} onChange={(e) => setDue(e.target.value)} />
+        <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={high} onChange={(e) => setHigh(e.target.checked)} /> {tr("Prioritaire")}</label>
+        <button type="submit" className={btn} disabled={!title.trim()}>{tr("Ajouter")}</button>
       </form>
       {err && <p role="alert" className="mb-2 text-sm text-red-600">{err}</p>}
-      {tasks.length === 0 && <p className="text-sm text-neutral-500">Aucune tâche.</p>}
+      {tasks.length === 0 && <p className="text-sm text-neutral-500">{tr("Aucune tâche.")}</p>}
       {groups.filter(([, l]) => l.length).map(([name, list]) => (
         <section key={name} className="mb-4">
-          <h2 className={`mb-1 text-sm font-medium ${name === "En retard" ? "text-red-600" : ""}`}>{name} <span className="text-neutral-500">({list.length})</span></h2>
+          <h2 className={`mb-1 text-sm font-medium ${name === tr("En retard") ? "text-red-600" : ""}`}>{name} <span className="text-neutral-500">({list.length})</span></h2>
           <ul>
             {list.map((t) => (
               <li key={t.id} className="group flex items-center gap-2 rounded-md px-2 py-1 hover:bg-neutral-50 dark:hover:bg-neutral-900">
-                <input type="checkbox" aria-label={`Terminer ${t.title}`} checked={t.status === "done"} onChange={(e) => rpc("tasks.setDone", { id: t.id, done: e.target.checked }).then(load)} />
+                <input type="checkbox" aria-label={tr("Terminer {0}", t.title)} checked={t.status === "done"} onChange={(e) => rpc("tasks.setDone", { id: t.id, done: e.target.checked }).then(load)} />
                 <span className={`flex-1 text-sm ${t.status === "done" ? "text-neutral-400 line-through" : ""}`}>
-                  {t.priority === 1 && <span title="Prioritaire">❗ </span>}{t.title}
-                  {t.aiAdded && <span className="ml-2 rounded bg-purple-100 px-1 text-xs text-purple-900 dark:bg-purple-900/40 dark:text-purple-100">IA</span>}
-                  {t.sourceRef?.type === "mail" && <button className="ml-2 text-xs underline text-neutral-500" onClick={() => onOpenMail(t.sourceRef!.id)}>mail</button>}
+                  {t.priority === 1 && <span title={tr("Prioritaire")}>❗ </span>}{t.title}
+                  {t.aiAdded && <span className="ml-2 rounded bg-purple-100 px-1 text-xs text-purple-900 dark:bg-purple-900/40 dark:text-purple-100">{tr("IA")}</span>}
+                  {t.sourceRef?.type === "mail" && <button className="ml-2 text-xs underline text-neutral-500" onClick={() => onOpenMail(t.sourceRef!.id)}>{tr("mail")}</button>}
                 </span>
-                {t.due && <span className="text-xs text-neutral-500">{new Date(t.due).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>}
-                <button aria-label={`Supprimer ${t.title}`} className="px-1 text-neutral-400 opacity-0 hover:text-red-600 focus:opacity-100 group-hover:opacity-100" onClick={() => rpc("tasks.delete", { id: t.id }).then(load)}>×</button>
+                {t.due && <span className="text-xs text-neutral-500">{new Date(t.due).toLocaleDateString(locale(), { day: "numeric", month: "short" })}</span>}
+                <button aria-label={tr("Supprimer {0}", t.title)} className="px-1 text-neutral-400 opacity-0 hover:text-red-600 focus:opacity-100 group-hover:opacity-100" onClick={() => rpc("tasks.delete", { id: t.id }).then(load)}>{tr("×")}</button>
               </li>
             ))}
           </ul>

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { tr } from "./i18n";
 import { rpc } from "./rpc";
 
 export interface PaletteAction { id: string; label: string; run: () => void }
 interface Hit { type: "document" | "conversation" | "mail" | "event"; id: string; title: string; snippet: string }
 type Row = { key: string; group: string; title: string; sub?: string; run: () => void };
 
-const GROUP: Record<Hit["type"], string> = { document: "Documents", conversation: "Conversations", mail: "Mails", event: "Événements" };
+const GROUP: Record<Hit["type"], string> = { document: tr("Documents"), conversation: tr("Conversations"), mail: tr("Mails"), event: tr("Événements") };
 
 /** Recherche globale (Cmd/Ctrl+K) : actions rapides + recherche hybride dans les données. */
 export function SearchPalette({ actions, onOpen, onClose }: {
@@ -59,7 +60,7 @@ export function SearchPalette({ actions, onOpen, onClose }: {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-24" onMouseDown={onClose}>
       <div
-        role="dialog" aria-modal="true" aria-label="Recherche globale"
+        role="dialog" aria-modal="true" aria-label={tr("Recherche globale")}
         className="w-[640px] max-w-[92vw] overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-2xl dark:border-neutral-700 dark:bg-neutral-900"
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={onKey}
@@ -67,9 +68,9 @@ export function SearchPalette({ actions, onOpen, onClose }: {
         <input
           autoFocus
           role="combobox" aria-expanded="true" aria-controls="palette-list"
-          aria-label="Rechercher ou saisir une commande"
+          aria-label={tr("Rechercher ou saisir une commande")}
           className="w-full border-b border-neutral-200 bg-transparent px-4 py-3 text-base outline-none dark:border-neutral-700"
-          placeholder="Rechercher dans vos mails, documents, conversations… ou lancer une action"
+          placeholder={tr("Rechercher dans vos mails, documents, conversations… ou lancer une action")}
           value={q} onChange={(e) => setQ(e.target.value)}
         />
         <ul id="palette-list" role="listbox" className="max-h-96 overflow-y-auto py-1">
@@ -90,12 +91,12 @@ export function SearchPalette({ actions, onOpen, onClose }: {
             );
           })}
           {q.trim().length >= 2 && !busy && !err && hits.length === 0 && (
-            <li className="px-4 py-2 text-sm text-neutral-500">Aucun résultat dans vos données.</li>
+            <li className="px-4 py-2 text-sm text-neutral-500">{tr("Aucun résultat dans vos données.")}</li>
           )}
-          {busy && <li className="px-4 py-2 text-sm text-neutral-500">Recherche…</li>}
+          {busy && <li className="px-4 py-2 text-sm text-neutral-500">{tr("Recherche…")}</li>}
           {err && <li role="alert" className="px-4 py-2 text-sm text-red-600">{err}</li>}
         </ul>
-        <div className="border-t border-neutral-200 px-4 py-1.5 text-xs text-neutral-500 dark:border-neutral-700">↑↓ naviguer · Entrée ouvrir · Échap fermer</div>
+        <div className="border-t border-neutral-200 px-4 py-1.5 text-xs text-neutral-500 dark:border-neutral-700">{tr("↑↓ naviguer · Entrée ouvrir · Échap fermer")}</div>
       </div>
     </div>
   );

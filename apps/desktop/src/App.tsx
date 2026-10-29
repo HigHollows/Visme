@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { tr } from "./i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { rpc } from "./rpc";
@@ -97,8 +98,8 @@ function Unlocked({ lock }: { lock: { enabled: boolean; idleMinutes: number } })
         let ok = await isPermissionGranted();
         if (!ok) ok = (await requestPermission()) === "granted";
         if (ok) sendNotification({
-          title: a.kind === "cancel" ? `Résiliation : ${a.service}` : `Échéance : ${a.service}`,
-          body: a.days === 0 ? "C'est aujourd'hui." : a.days === 1 ? "C'est demain." : `Dans ${a.days} jours au plus tard.`,
+          title: a.kind === "cancel" ? tr("Résiliation : {0}", a.service) : tr("Échéance : {0}", a.service),
+          body: a.days === 0 ? tr("C'est aujourd'hui.") : a.days === 1 ? tr("C'est demain.") : tr("Dans {0} jours au plus tard.", a.days),
         });
       } catch { /* les notifications système sont facultatives */ }
     });
@@ -145,14 +146,14 @@ function Unlocked({ lock }: { lock: { enabled: boolean; idleMinutes: number } })
     const m = await rpc<{ id: string; title: string }>("meetings.start", { title: o.title, language: o.language || undefined, consent: true });
     const r = new MeetingRecorder(m.id, (seg) => rpc("meetings.segment", { id: m.id, ...seg }));
     try { await r.start(o.deviceId || undefined); }
-    catch (e) { await rpc("meetings.finish", { id: m.id, durationMs: 0 }).catch(() => {}); throw new Error(`Micro inaccessible : ${e instanceof Error ? e.message : e}. Autorisez le micro pour ASSISTANT dans les réglages système.`); }
+    catch (e) { await rpc("meetings.finish", { id: m.id, durationMs: 0 }).catch(() => {}); throw new Error(tr("Micro inaccessible : {0}. Autorisez le micro pour ASSISTANT dans les réglages système.", e instanceof Error ? e.message : e)); }
     recorder.current = r;
     const startedAt = Date.now();
     setRec({ id: m.id, title: m.title, startedAt, system: false });
     setRecErr("");
     if (o.systemAudio) {
       try { await invoke("system_audio_start", { meetingId: m.id, startedAtMs: startedAt }); setRec((cur) => (cur ? { ...cur, system: true } : cur)); }
-      catch (e) { setRecErr(`Audio système indisponible (la réunion continue avec le micro seul) : ${e}`); }
+      catch (e) { setRecErr(tr("Audio système indisponible (la réunion continue avec le micro seul) : {0}", e)); }
     }
   };
   const stopRecording = async () => {
@@ -189,7 +190,7 @@ function Unlocked({ lock }: { lock: { enabled: boolean; idleMinutes: number } })
         if (!st.notifications.newProposals) return;
         let ok = await isPermissionGranted();
         if (!ok) ok = (await requestPermission()) === "granted";
-        if (ok) sendNotification({ title: "ASSISTANT", body: `${n - prev} nouvelle(s) suggestion(s) à valider` });
+        if (ok) sendNotification({ title: "ASSISTANT", body: tr("{0} nouvelle(s) suggestion(s) à valider", n - prev) });
       } catch { /* facultatif */ }
     });
     return () => void un.then((f) => f());
@@ -214,22 +215,22 @@ function Unlocked({ lock }: { lock: { enabled: boolean; idleMinutes: number } })
 
   return (
     <div className="flex h-screen bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
-      <nav aria-label="Navigation principale" className="w-56 shrink-0 border-r border-neutral-200 p-3 dark:border-neutral-800">
+      <nav aria-label={tr("Navigation principale")} className="w-56 shrink-0 border-r border-neutral-200 p-3 dark:border-neutral-800">
         <div className="relative mb-4">
-          <button onClick={() => setProfileMenu((v) => !v)} aria-haspopup="menu" aria-expanded={profileMenu} title="Changer de profil (Ctrl/Cmd+Maj+P)"
+          <button onClick={() => setProfileMenu((v) => !v)} aria-haspopup="menu" aria-expanded={profileMenu} title={tr("Changer de profil (Ctrl/Cmd+Maj+P)")}
             className="flex w-full items-center gap-2 rounded-md border border-neutral-200 px-3 py-2 text-left text-sm dark:border-neutral-800">
             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: reg?.profiles.find((p) => p.id === reg.current)?.color ?? "#64748b" }} />
-            <span className="flex-1 truncate">{reg?.profiles.find((p) => p.id === reg.current)?.name ?? "Profil"}</span>▾
+            <span className="flex-1 truncate">{reg?.profiles.find((p) => p.id === reg.current)?.name ?? tr("Profil")}</span>▾
           </button>
           {profileMenu && reg && (
             <ul role="menu" className="absolute left-0 right-0 z-30 mt-1 rounded-md border border-neutral-200 bg-white py-1 text-sm shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
               {reg.profiles.map((p) => (
-                <li key={p.id} role="none"><button role="menuitem" disabled={!!rec && p.id !== reg.current} title={rec ? "Arrêtez l'enregistrement avant de changer de profil" : ""}
+                <li key={p.id} role="none"><button role="menuitem" disabled={!!rec && p.id !== reg.current} title={rec ? tr("Arrêtez l'enregistrement avant de changer de profil") : ""}
                   className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-neutral-100 disabled:opacity-40 dark:hover:bg-neutral-800"
                   onClick={() => { setProfileMenu(false); if (p.id !== reg.current) void invoke("profile_switch", { id: p.id }).catch((e) => setRecErr(String(e))); }}>
                   <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: p.color }} />{p.name}{p.id === reg.current && " ✓"}</button></li>
               ))}
-              <li role="none"><button role="menuitem" className="w-full border-t border-neutral-200 px-3 py-1.5 text-left hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800" onClick={() => { setProfileMenu(false); setSettingsTab("Profils"); setActive("Settings"); }}>Gérer les profils…</button></li>
+              <li role="none"><button role="menuitem" className="w-full border-t border-neutral-200 px-3 py-1.5 text-left hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800" onClick={() => { setProfileMenu(false); setSettingsTab("Profils"); setActive("Settings"); }}>{tr("Gérer les profils…")}</button></li>
             </ul>
           )}
         </div>
@@ -241,38 +242,38 @@ function Unlocked({ lock }: { lock: { enabled: boolean; idleMinutes: number } })
                 aria-current={active === s ? "page" : undefined}
                 className={`w-full rounded-md px-3 py-1.5 text-left text-sm ${active === s ? "bg-neutral-100 font-medium dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-900"}`}
               >
-                {s}
-                {s === "À valider" && pending > 0 && <span aria-label={`${pending} en attente`} className="ml-2 rounded-full bg-red-600 px-1.5 text-xs text-white">{pending}</span>}
+                {tr(s)}
+                {s === "À valider" && pending > 0 && <span aria-label={tr("{0} en attente", pending)} className="ml-2 rounded-full bg-red-600 px-1.5 text-xs text-white">{pending}</span>}
               </button>
             </li>
           ))}
         </ul>
-        {lock.enabled && <button onClick={() => invoke("lock_now").then(() => window.location.reload())} className="mt-4 w-full rounded-md px-3 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-50 dark:hover:bg-neutral-900">🔒 Verrouiller</button>}
+        {lock.enabled && <button onClick={() => invoke("lock_now").then(() => window.location.reload())} className="mt-4 w-full rounded-md px-3 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-50 dark:hover:bg-neutral-900">{tr("🔒 Verrouiller")}</button>}
       </nav>
       <main className="flex-1 overflow-y-auto p-8">
         {rec && (
           <div role="alert" className="-mx-8 -mt-8 mb-6 flex items-center gap-3 bg-red-600 px-8 py-2 text-sm text-white">
             <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-white" />
-            <strong>Enregistrement en cours{rec.system ? " (micro + son de l'ordinateur)" : ""}</strong> — {rec.title} — {(() => { void tick; const s = Math.floor((Date.now() - rec.startedAt) / 1000); return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; })()}
-            <button className="ml-auto rounded bg-white px-3 py-1 font-medium text-red-700" onClick={stopRecording}>■ Arrêter</button>
+            <strong>{tr("Enregistrement en cours")}{rec.system ? tr(" (micro + son de l'ordinateur)") : ""}</strong> — {rec.title} — {(() => { void tick; const s = Math.floor((Date.now() - rec.startedAt) / 1000); return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; })()}
+            <button className="ml-auto rounded bg-white px-3 py-1 font-medium text-red-700" onClick={stopRecording}>{tr("■ Arrêter")}</button>
           </div>
         )}
         {recErr && <p role="alert" className="mb-3 text-sm text-red-600">{recErr}</p>}
         {update && (
           <div role="status" className="mb-4 flex items-center gap-3 rounded-md bg-blue-50 px-4 py-2 text-sm text-blue-900 dark:bg-blue-950/50 dark:text-blue-100">
-            Version <strong>{update.version}</strong> disponible.
-            <button className="rounded border border-blue-300 px-2 py-0.5 hover:bg-blue-100 dark:border-blue-700 dark:hover:bg-blue-900" onClick={() => { setSettingsTab("À propos"); setActive("Settings"); setUpdate(null); }}>Voir</button>
-            <button className="ml-auto px-1" aria-label="Ignorer" onClick={() => setUpdate(null)}>×</button>
+            {tr("Version")} <strong>{update.version}</strong> {tr("disponible.")}
+            <button className="rounded border border-blue-300 px-2 py-0.5 hover:bg-blue-100 dark:border-blue-700 dark:hover:bg-blue-900" onClick={() => { setSettingsTab("À propos"); setActive("Settings"); setUpdate(null); }}>{tr("Voir")}</button>
+            <button className="ml-auto px-1" aria-label={tr("Ignorer")} onClick={() => setUpdate(null)}>{tr("×")}</button>
           </div>
         )}
-        <h1 className="text-2xl font-semibold">{active}</h1>
+        <h1 className="text-2xl font-semibold">{tr(active)}</h1>
         {active === "Settings" ? (
           <div className="mt-4 flex gap-6">
-            <nav aria-label="Sections des réglages" className="w-44 shrink-0">
+            <nav aria-label={tr("Sections des réglages")} className="w-44 shrink-0">
               <ul className="space-y-0.5">
                 {SETTINGS_TABS.map((t) => (
                   <li key={t}><button onClick={() => setSettingsTab(t)} aria-current={settingsTab === t ? "page" : undefined}
-                    className={`w-full rounded-md px-3 py-1.5 text-left text-sm ${settingsTab === t ? "bg-neutral-100 font-medium dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-900"}`}>{t}</button></li>
+                    className={`w-full rounded-md px-3 py-1.5 text-left text-sm ${settingsTab === t ? "bg-neutral-100 font-medium dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-900"}`}>{tr(t)}</button></li>
                 ))}
               </ul>
             </nav>
@@ -315,16 +316,16 @@ function Unlocked({ lock }: { lock: { enabled: boolean; idleMinutes: number } })
           <div className="mt-4"><Documents selectedId={target.doc} /></div>
         ) : (
           <>
-        <p className="mt-2 text-sm text-neutral-500">Version {version} — section en construction.</p>
-        <p className="mt-1 text-sm text-neutral-500">Autonomie (via sidecar + base chiffrée) : {autonomy}</p>
+        <p className="mt-2 text-sm text-neutral-500">{tr("Version")} {version} {tr("— section en construction.")}</p>
+        <p className="mt-1 text-sm text-neutral-500">{tr("Autonomie (via sidecar + base chiffrée) :")} {autonomy}</p>
           </>
         )}
       </main>
       {palette && (
         <SearchPalette
           actions={[
-            ...SECTIONS.map((n) => ({ id: `go:${n}`, label: `Aller à ${n}`, run: () => setActive(n) })),
-            { id: "newchat", label: "Nouvelle conversation", run: () => { setTarget({ chat: null }); setActive("Chat"); } },
+            ...SECTIONS.map((n) => ({ id: `go:${n}`, label: tr("Aller à {0}", tr(n)), run: () => setActive(n) })),
+            { id: "newchat", label: tr("Nouvelle conversation"), run: () => { setTarget({ chat: null }); setActive("Chat"); } },
           ]}
           onOpen={(type, id) => {
             if (type === "document") { setTarget({ doc: id }); setActive("Documents"); }
