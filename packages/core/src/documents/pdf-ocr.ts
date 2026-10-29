@@ -1,7 +1,7 @@
 import { PDFDocument } from "pdf-lib";
 
-/** Une page est considérée comme un scan quand elle ne contient (presque) pas de texte extractible. */
-export const SCAN_MIN_CHARS = 25;
+/** Une page est considérée comme un scan quand elle ne contient (presque) aucun texte extractible (un simple numéro de page compte comme vide). */
+export const SCAN_MIN_CHARS = 5;
 export const PAGES_PER_REQUEST = 10;
 export const MAX_OCR_PAGES = 60;
 

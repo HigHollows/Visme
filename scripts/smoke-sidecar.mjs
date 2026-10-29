@@ -85,6 +85,20 @@ try {
   const r = await call("plugins.callTool", { name: "plugin:example-hello:hello", args: { name: "Test" } });
   check("outil de plugin exécuté dans le bac à sable", /Bonjour Test/.test(r.result), JSON.stringify(r));
 
+  // Bibliothèques réseau empaquetées (IMAP, SMTP, CalDAV) : elles doivent se charger et échouer proprement sans serveur.
+  const imapErr = await call("accounts.addImap", { email: "a@b.fr", imapHost: "127.0.0.1", imapPort: 1, insecure: true, password: "x" }).then(() => "", (e) => e.message);
+  check("IMAP empaqueté (échec propre sans serveur)", /Connexion IMAP impossible/.test(imapErr), imapErr);
+  const davErr = await call("accounts.addCalDav", { url: "http://127.0.0.1:1/dav", user: "u", password: "p" }).then(() => "", (e) => e.message);
+  check("CalDAV empaqueté (échec propre sans serveur)", /Connexion CalDAV impossible/.test(davErr), davErr);
+  // PDF scanné sans route OCR : lecture des pages (unpdf) puis message clair
+  const { PDFDocument } = req("pdf-lib");
+  const scan = await PDFDocument.create(); scan.addPage([200, 200]);
+  const scanPath = join(dir, "scan.pdf"); writeFileSync(scanPath, Buffer.from(await scan.save()));
+  const [sc] = await call("documents.add", { paths: [scanPath] });
+  let scanDoc;
+  for (let i = 0; i < 100; i++) { scanDoc = await call("documents.get", { id: sc.id }); if (scanDoc.status !== "indexing") break; await new Promise((r) => setTimeout(r, 100)); }
+  check("PDF scanné : message clair sans route OCR", scanDoc.status === "error" && /OCR/.test(scanDoc.error ?? ""), JSON.stringify(scanDoc));
+
   // Réglages & journal
   const s = await call("settings.get");
   check("réglages par défaut", s.agent.enabled === false && s.agent.autonomy === "propose");

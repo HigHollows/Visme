@@ -68,7 +68,7 @@ function Unlocked({ lock }: { lock: { enabled: boolean; idleMinutes: number } })
   const [pending, setPending] = useState(0);
   const [reg, setReg] = useState<Registry | null>(null);
   const [profileMenu, setProfileMenu] = useState(false);
-  const [rec, setRec] = useState<{ id: string; title: string; startedAt: number } | null>(null);
+  const [rec, setRec] = useState<{ id: string; title: string; startedAt: number; system: boolean } | null>(null);
   const [tick, setTick] = useState(0);
   const recorder = useRef<MeetingRecorder | null>(null);
   const [recErr, setRecErr] = useState("");
@@ -141,19 +141,30 @@ function Unlocked({ lock }: { lock: { enabled: boolean; idleMinutes: number } })
     return () => { clearInterval(t); window.removeEventListener("beforeunload", warn); };
   }, [rec]);
 
-  const startRecording = async (o: { title: string; deviceId: string; language: string }) => {
+  const startRecording = async (o: { title: string; deviceId: string; language: string; systemAudio: boolean }) => {
     const m = await rpc<{ id: string; title: string }>("meetings.start", { title: o.title, language: o.language || undefined, consent: true });
     const r = new MeetingRecorder(m.id, (seg) => rpc("meetings.segment", { id: m.id, ...seg }));
     try { await r.start(o.deviceId || undefined); }
     catch (e) { await rpc("meetings.finish", { id: m.id, durationMs: 0 }).catch(() => {}); throw new Error(`Micro inaccessible : ${e instanceof Error ? e.message : e}. Autorisez le micro pour ASSISTANT dans les réglages système.`); }
     recorder.current = r;
-    setRec({ id: m.id, title: m.title, startedAt: Date.now() });
+    const startedAt = Date.now();
+    setRec({ id: m.id, title: m.title, startedAt, system: false });
     setRecErr("");
+    if (o.systemAudio) {
+      try { await invoke("system_audio_start", { meetingId: m.id, startedAtMs: startedAt }); setRec((cur) => (cur ? { ...cur, system: true } : cur)); }
+      catch (e) { setRecErr(`Audio système indisponible (la réunion continue avec le micro seul) : ${e}`); }
+    }
   };
   const stopRecording = async () => {
     const r = recorder.current;
     if (!r || !rec) return;
-    try { const ms = await r.stop(); await rpc("meetings.finish", { id: rec.id, durationMs: ms }); setActive("Réunions"); }
+    try {
+      const ms = await r.stop();
+      // La piste système doit avoir envoyé son dernier segment avant la fin de la réunion.
+      if (rec.system) await invoke("system_audio_stop").catch(() => {});
+      await rpc("meetings.finish", { id: rec.id, durationMs: ms });
+      setActive("Réunions");
+    }
     catch (e) { setRecErr(String(e)); }
     recorder.current = null; setRec(null);
   };
@@ -242,7 +253,7 @@ function Unlocked({ lock }: { lock: { enabled: boolean; idleMinutes: number } })
         {rec && (
           <div role="alert" className="-mx-8 -mt-8 mb-6 flex items-center gap-3 bg-red-600 px-8 py-2 text-sm text-white">
             <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-white" />
-            <strong>Enregistrement en cours</strong> — {rec.title} — {(() => { void tick; const s = Math.floor((Date.now() - rec.startedAt) / 1000); return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; })()}
+            <strong>Enregistrement en cours{rec.system ? " (micro + son de l'ordinateur)" : ""}</strong> — {rec.title} — {(() => { void tick; const s = Math.floor((Date.now() - rec.startedAt) / 1000); return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; })()}
             <button className="ml-auto rounded bg-white px-3 py-1 font-medium text-red-700" onClick={stopRecording}>■ Arrêter</button>
           </div>
         )}
@@ -299,7 +310,7 @@ function Unlocked({ lock }: { lock: { enabled: boolean; idleMinutes: number } })
         ) : active === "Calendrier" ? (
           <div className="mt-4"><CalendarPage openAt={target.cal} /></div>
         ) : active === "Mails" ? (
-          <div className="mt-4"><Mails selectedId={target.mail} /></div>
+          <div className="mt-4"><Mails selectedId={target.mail} onOpenDoc={(id) => { setTarget({ doc: id }); setActive("Documents"); }} /></div>
         ) : active === "Documents" ? (
           <div className="mt-4"><Documents selectedId={target.doc} /></div>
         ) : (

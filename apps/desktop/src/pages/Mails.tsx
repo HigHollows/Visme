@@ -3,14 +3,15 @@ import { listen } from "@tauri-apps/api/event";
 import { CATEGORY_LABEL, rpc } from "../rpc";
 
 interface Row { category: string | null; id: string; subject: string; fromName: string; fromAddr: string; date: number; snippet: string; attachmentCount: number }
-interface Full extends Row { summary: string | null; toAddrs: string; body: string; attachments: { name: string; size: number }[] }
+interface Att { name: string; size: number; documentId?: string }
+interface Full extends Row { summary: string | null; toAddrs: string; body: string; attachments: Att[] }
 
 const fmtDate = (t: number) => new Date(t).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
 interface Draft { id: string; body: string; scope: string | null }
 const btn = "rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800";
 
-function DraftPanel({ mailId }: { mailId: string }) {
+function DraftPanel({ mailId, to }: { mailId: string; to: string }) {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,7 +27,7 @@ function DraftPanel({ mailId }: { mailId: string }) {
   const latest = drafts[0];
   return (
     <section className="mt-6 border-t border-neutral-200 pt-3 dark:border-neutral-800" aria-label="Brouillon de réponse">
-      <h3 className="mb-2 text-sm font-medium">Brouillon de réponse <span className="font-normal text-neutral-500">(jamais envoyé automatiquement)</span></h3>
+      <h3 className="mb-2 text-sm font-medium">Brouillon de réponse <span className="font-normal text-neutral-500">(jamais envoyé sans votre confirmation)</span></h3>
       <div className="flex gap-2">
         <input aria-label="Consigne" placeholder="Consigne facultative (ex. « dis que je confirme lundi »)" className="flex-1 rounded-md border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700" value={instruction} onChange={(e) => setInstruction(e.target.value)} />
         <button className={btn} disabled={busy} onClick={() => run({ instruction: instruction || undefined })}>{busy ? "Rédaction…" : latest ? "Nouveau brouillon" : "Rédiger"}</button>
@@ -39,6 +40,10 @@ function DraftPanel({ mailId }: { mailId: string }) {
             onBlur={(e) => { if (e.target.value !== latest.body) void rpc("drafts.update", { id: latest.id, body: e.target.value }).then(load); }} />
           <div className="flex flex-wrap gap-2">
             {([["shorter", "Plus court"], ["formal", "Plus formel"], ["direct", "Plus direct"]] as const).map(([k, l]) => <button key={k} className={btn} disabled={busy} onClick={() => run({ rewrite: k, draftId: latest.id })}>{l}</button>)}
+            <button className={`${btn} font-medium`} disabled={busy} onClick={async () => {
+              if (!confirm(`Envoyer ce message maintenant ?\n\nÀ : ${to}\n\n${latest.body.slice(0, 600)}${latest.body.length > 600 ? "…" : ""}`)) return;
+              try { await rpc("drafts.send", { draftId: latest.id, confirm: true }); setMsg("Message envoyé."); load(); } catch (e) { setMsg(String(e)); }
+            }}>Envoyer…</button>
             <button className={btn} onClick={() => navigator.clipboard.writeText(latest.body).then(() => setMsg("")).catch(() => setMsg("Copie impossible"))}>Copier</button>
             <button className={btn} onClick={() => rpc("drafts.delete", { id: latest.id }).then(load)}>Supprimer</button>
           </div>
@@ -48,12 +53,13 @@ function DraftPanel({ mailId }: { mailId: string }) {
   );
 }
 
-export function Mails({ selectedId }: { selectedId?: string | null }) {
+export function Mails({ selectedId, onOpenDoc }: { selectedId?: string | null; onOpenDoc?: (id: string) => void }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [q, setQ] = useState("");
   const [sel, setSel] = useState<string | null>(selectedId ?? null);
   const [mail, setMail] = useState<Full | null>(null);
   const [err, setErr] = useState("");
+  const [attMsg, setAttMsg] = useState("");
 
   const load = useCallback(() => {
     rpc<Row[]>("mail.list", { q: q.trim() || undefined, limit: 100 }).then((r) => { setRows(r); setErr(""); }).catch((e) => setErr(String(e)));
@@ -105,11 +111,27 @@ export function Mails({ selectedId }: { selectedId?: string | null }) {
             )}
             {/* Texte brut uniquement : pas de HTML distant, pas de pixels espions. */}
             <div className="whitespace-pre-wrap break-words text-sm">{mail.body}</div>
-            <DraftPanel mailId={mail.id} />
+            <DraftPanel mailId={mail.id} to={mail.fromAddr} />
             {mail.attachments.length > 0 && (
-              <ul className="mt-4 border-t border-neutral-200 pt-2 text-sm dark:border-neutral-800">
-                {mail.attachments.map((a, i) => <li key={i}>📎 {a.name} <span className="text-xs text-neutral-500">({Math.max(1, Math.round(a.size / 1000))} Ko)</span></li>)}
-              </ul>
+              <div className="mt-4 border-t border-neutral-200 pt-2 text-sm dark:border-neutral-800">
+                <ul>
+                  {mail.attachments.map((a, i) => (
+                    <li key={i}>📎 {a.name} <span className="text-xs text-neutral-500">({Math.max(1, Math.round(a.size / 1000))} Ko)</span>
+                      {a.documentId && <button className="ml-2 text-xs underline" onClick={() => onOpenDoc?.(a.documentId!)}>indexée</button>}</li>
+                  ))}
+                </ul>
+                {mail.attachments.some((a) => !a.documentId) && (
+                  <button className={`${btn} mt-2`} onClick={async () => {
+                    setAttMsg("Import…");
+                    try {
+                      const r = await rpc<{ imported: number; skipped: { name: string; reason: string }[] }>("mail.importAttachments", { id: mail.id });
+                      setAttMsg(`${r.imported} importée(s)${r.skipped.length ? ` · ignorées : ${r.skipped.map((s) => `${s.name} (${s.reason})`).join(", ")}` : ""}`);
+                      setMail(await rpc<Full>("mail.get", { id: mail.id }));
+                    } catch (e) { setAttMsg(String(e)); }
+                  }}>Importer les pièces jointes dans les documents</button>
+                )}
+                {attMsg && <p role="status" className="mt-1 text-xs text-neutral-500">{attMsg}</p>}
+              </div>
             )}
           </>
         )}

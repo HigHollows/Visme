@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import { listMics } from "../audio";
 import { rpc } from "../rpc";
 
@@ -17,7 +18,7 @@ const STATUS: Record<Meeting["status"], string> = { recording: "● enregistreme
 
 export interface RecorderApi {
   recording: { id: string; title: string } | null;
-  start: (o: { title: string; deviceId: string; language: string }) => Promise<void>;
+  start: (o: { title: string; deviceId: string; language: string; systemAudio: boolean }) => Promise<void>;
 }
 
 function ConsentDialog({ recorder, onClose }: { recorder: RecorderApi; onClose: () => void }) {
@@ -27,9 +28,11 @@ function ConsentDialog({ recorder, onClose }: { recorder: RecorderApi; onClose: 
   const [device, setDevice] = useState(() => { try { return localStorage.getItem("mic") ?? ""; } catch { return ""; } });
   const [language, setLanguage] = useState("fr");
   const [err, setErr] = useState("");
-  useEffect(() => { void listMics().then(setMics); }, []);
+  const [sys, setSys] = useState<{ supported: boolean; reason?: string } | null>(null);
+  const [systemAudio, setSystemAudio] = useState(false);
+  useEffect(() => { void listMics().then(setMics); invoke<{ supported: boolean; reason?: string }>("system_audio_supported").then(setSys).catch(() => setSys({ supported: false })); }, []);
   const go = async () => {
-    try { try { localStorage.setItem("mic", device); } catch { /* facultatif */ } await recorder.start({ title, deviceId: device, language }); onClose(); }
+    try { try { localStorage.setItem("mic", device); } catch { /* facultatif */ } await recorder.start({ title, deviceId: device, language, systemAudio }); onClose(); }
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   };
   return (
@@ -42,7 +45,12 @@ function ConsentDialog({ recorder, onClose }: { recorder: RecorderApi; onClose: 
           <label>Micro<br /><select className={input} value={device} onChange={(e) => setDevice(e.target.value)}><option value="">Micro par défaut</option>{mics.map((m) => <option key={m.deviceId} value={m.deviceId}>{m.label || "Micro"}</option>)}</select></label>
           <label>Langue<br /><select className={input} value={language} onChange={(e) => setLanguage(e.target.value)}><option value="fr">Français</option><option value="en">English</option><option value="">Détection auto</option></select></label>
         </div>
-        <p className="text-xs text-neutral-500">Seul le micro est enregistré. Pour capter l'audio d'une visioconférence, choisissez comme micro un périphérique de bouclage (ex. BlackHole sur macOS) : l'audio système n'est pas capté directement.</p>
+        {sys?.supported ? (
+          <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={systemAudio} onChange={(e) => setSystemAudio(e.target.checked)} />
+            <span><strong>Capter aussi le son de l'ordinateur</strong> (participants d'une visioconférence)<br /><span className="text-xs text-neutral-500">Deux pistes : « Vous » (micro) et « Participants » (système). Utilisez un casque pour éviter que le micro ne reprenne les haut-parleurs. Sur macOS, l'autorisation « Enregistrement audio du système » sera demandée.</span></span></label>
+        ) : (
+          <p className="text-xs text-neutral-500">{sys?.reason ?? "Audio système non disponible."} Pour capter une visioconférence, vous pouvez choisir un périphérique de bouclage (ex. BlackHole) comme micro.</p>
+        )}
         <label className="flex items-start gap-2 rounded-md bg-amber-50 p-3 text-sm dark:bg-amber-950/40">
           <input type="checkbox" className="mt-1" checked={ok} onChange={(e) => setOk(e.target.checked)} />
           <span><strong>J'ai prévenu les participants</strong> que cette réunion est enregistrée et transcrite (obligation légale dans de nombreux pays). Un indicateur rouge reste affiché pendant l'enregistrement.</span>

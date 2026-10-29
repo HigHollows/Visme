@@ -6,6 +6,7 @@ interface Ev {
   id: string; title: string; description: string; location: string; start: number; end: number;
   allDay: boolean; source: "google" | "local" | "ai"; aiAdded: boolean; link: string | null;
   confidence: number | null; sourceRef: { type: string; id: string } | null;
+  writable?: boolean; pushError?: string | null; remoteId?: string | null;
 }
 type View = "day" | "week" | "month" | "agenda";
 
@@ -152,7 +153,7 @@ function Agenda({ anchor, events, onOpen }: { anchor: Date; events: Ev[]; onOpen
 }
 
 function EventDialog({ ev, draft, onClose, onSaved }: { ev: Ev | null; draft: number | null; onClose: () => void; onSaved: () => void }) {
-  const editable = !ev || ev.source !== "google";
+  const editable = !ev || ev.writable !== false;
   const [editing, setEditing] = useState(!ev);
   const base = ev?.start ?? draft ?? Date.now();
   const [title, setTitle] = useState(ev?.title ?? "");
@@ -185,8 +186,9 @@ function EventDialog({ ev, draft, onClose, onSaved }: { ev: Ev | null; draft: nu
             <p className="text-sm">{ev.allDay ? fmtDay(new Date(ev.start), { dateStyle: "full" }) : `${fmtDay(new Date(ev.start), { dateStyle: "full" })}, ${fmtTime(ev.start)}–${fmtTime(ev.end)}`}</p>
             {ev.location && <p className="text-sm">📍 {ev.location}</p>}
             {ev.description && <p className="whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">{ev.description}</p>}
+            {ev.pushError && <p role="alert" className="text-xs text-red-600">Écriture vers l'agenda distant impossible : {ev.pushError}</p>}
             <p className="text-xs text-neutral-500">
-              {ev.aiAdded ? `✨ Ajouté par l'IA${ev.confidence != null ? ` (confiance ${Math.round(ev.confidence * 100)} %)` : ""}` : ev.source === "google" ? "Google Agenda (lecture seule)" : "Créé dans ASSISTANT"}
+              {ev.aiAdded ? `✨ Ajouté par l'IA${ev.confidence != null ? ` (confiance ${Math.round(ev.confidence * 100)} %)` : ""}` : ev.source === "local" ? "Créé dans ASSISTANT" : `Agenda synchronisé (${ev.source})${ev.writable ? "" : " — lecture seule"}`}{ev.remoteId && (ev.source === "local" || ev.source === "ai") ? " · écrit dans votre agenda" : ""}
               {ev.link && ev.link.startsWith("https://") && <> · <a className="underline" href={ev.link} target="_blank" rel="noreferrer noopener">Ouvrir dans Google</a></>}
             </p>
             <div className="flex justify-end gap-2">
