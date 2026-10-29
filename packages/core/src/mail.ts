@@ -1,114 +1,51 @@
-import { randomUUID } from "node:crypto";
-import { GmailClient, HistoryExpiredError, type FetchFn, type MailMessage } from "@assistant/connectors";
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { basename, extname, join } from "node:path";
+import { type FetchFn, type MailAttachment, type MailMessage } from "@assistant/connectors";
 import { audit, type Db } from "@assistant/db";
-import { GoogleAuth, type Feature, type GoogleConfig } from "./google";
+import type { Settings } from "@assistant/schemas";
+import { featuresOf, type AccountService } from "./accounts";
+import { isSupported } from "./documents/extract";
 
-const INITIAL_QUERY = "newer_than:30d";
-const INITIAL_MAX = 500;
-const CONCURRENCY = 5;
+const ATTACH_MAX_BYTES = 15 * 1024 * 1024;
+const ATTACH_MAX_PER_MAIL = 5;
+const IMAGE_MIN_BYTES = 20 * 1024; // en dessous : logos et pixels de signature
+const SEND_LIMIT_PER_HOUR = 20;
 
 export interface MailDeps {
   db: Db;
-  fetch?: FetchFn;
-  openUrl: (url: string) => void | Promise<void>;
+  accounts: AccountService;
+  dataDir: () => string;
+  settings: () => Settings;
   notify: (method: string, params: unknown) => void;
-  sleep?: (ms: number) => Promise<void>;
+  /** Indexe un fichier (pièce jointe) comme document, avec le lien vers son mail. */
+  documents: { add(path: string, opts?: { sourceRef?: { type: string; id: string } }): Promise<{ id: string; duplicate: boolean }> };
+  fetch?: FetchFn;
+  now?: () => number;
 }
 
-interface AccountRow {
-  id: string;
-  provider: string;
-  email: string;
-  tokens: string;
-  history_id: string | null;
+interface StoredAttachment extends MailAttachment {
+  documentId?: string;
 }
 
-async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>) {
-  let i = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(n, items.length) }, async () => {
-      while (i < items.length) await fn(items[i++]!);
-    }),
-  );
-}
+const safeName = (n: string) =>
+  basename(n.replace(/[\\/\0-\x1f<>:"|?*]/g, "_")).replace(/^\.+/, "").slice(0, 120) || "piece-jointe";
 
 export class MailService {
   private syncing = new Set<string>();
-  readonly auth: GoogleAuth;
 
-  constructor(private d: MailDeps) {
-    this.auth = new GoogleAuth(d.db, d.fetch);
-  }
+  constructor(private d: MailDeps) {}
 
-  // --- configuration OAuth (client ID créé par l'utilisateur dans sa console Google) ---
-
-  getGoogleConfig(): GoogleConfig | null {
-    return this.auth.getConfig();
-  }
-
-  setGoogleConfig(c: GoogleConfig) {
-    this.auth.setConfig(c);
-  }
-
-  // --- comptes ---
-
-  listAccounts() {
-    const rows = this.d.db
-      .prepare(
-        `SELECT a.id, a.provider, a.email, a.status, a.sync_status AS syncStatus, a.sync_error AS syncError,
-                a.last_sync_at AS lastSyncAt, a.tokens, (SELECT count(*) FROM mails m WHERE m.account_id = a.id) AS mailCount,
-                cs.status AS calendarStatus, cs.error AS calendarError, cs.last_sync_at AS calendarLastSyncAt,
-                (SELECT count(*) FROM events e WHERE e.account_id = a.id) AS eventCount
-         FROM accounts a LEFT JOIN calendar_sync cs ON cs.account_id = a.id ORDER BY a.created_at`,
-      )
-      .all() as ({ id: string; tokens: string } & Record<string, unknown>)[];
-    // Les jetons ne quittent jamais le sidecar : on n'expose que les fonctionnalités accordées.
-    return rows.map(({ tokens, ...r }) => ({ ...r, features: GoogleAuth.features(tokens) }));
-  }
-
-  removeAccount(id: string) {
-    this.d.db.prepare("DELETE FROM accounts WHERE id = ?").run(id); // cascade : mails + index plein texte
-    audit(this.d.db, "user", "account.remove", { id });
-  }
-
-  async connectGoogle(features: Feature[] = ["mail"], loginHint?: string): Promise<{ id: string; email: string; features: Record<Feature, boolean> }> {
-    const tokens = await this.auth.authorize(features, this.d.openUrl, loginHint);
-    // Le profil Gmail donne l'adresse ; sans portée mail, on la lit via le calendrier "primary" (son id est l'adresse).
-    const email = await this.resolveEmail(tokens.accessToken, features);
-
-    const existing = this.d.db.prepare("SELECT id FROM accounts WHERE provider='google' AND email=?").get(email) as
-      | { id: string }
-      | undefined;
-    const id = existing?.id ?? randomUUID();
-    if (existing)
-      this.d.db.prepare("UPDATE accounts SET tokens=?, status='ok' WHERE id=?").run(JSON.stringify(tokens), id);
-    else
-      this.d.db
-        .prepare("INSERT INTO accounts(id, provider, email, tokens, created_at) VALUES (?, 'google', ?, ?, ?)")
-        .run(id, email, JSON.stringify(tokens), Date.now());
-    audit(this.d.db, "user", "account.connect", { id, email, provider: "google", features });
-    return { id, email, features: GoogleAuth.features(JSON.stringify(tokens)) };
-  }
-
-  private async resolveEmail(accessToken: string, features: Feature[]): Promise<string> {
-    const f = this.d.fetch ?? fetch;
-    const url = features.includes("mail")
-      ? "https://gmail.googleapis.com/gmail/v1/users/me/profile"
-      : "https://www.googleapis.com/calendar/v3/calendars/primary";
-    const res = await f(url, { headers: { authorization: `Bearer ${accessToken}` } });
-    if (!res.ok) throw new Error(`Impossible de lire le profil du compte (${res.status})`);
-    const j = (await res.json()) as { emailAddress?: string; id?: string };
-    const email = (j.emailAddress ?? j.id ?? "").toLowerCase();
-    if (!email.includes("@")) throw new Error("Adresse du compte introuvable");
-    return email;
+  private now() {
+    return (this.d.now ?? Date.now)();
   }
 
   // --- synchronisation ---
 
   /** Lance la synchro en arrière-plan ; l'avancement est notifié via `mail.event`. */
   startSync(accountId: string): boolean {
-    const row = this.d.db.prepare("SELECT tokens FROM accounts WHERE id=?").get(accountId) as { tokens: string } | undefined;
-    if (!row || !GoogleAuth.features(row.tokens).mail) return false; // compte sans accès au mail (calendrier seul)
+    const row = this.d.db.prepare("SELECT provider, tokens FROM accounts WHERE id=?").get(accountId) as { provider: string; tokens: string } | undefined;
+    if (!row || !featuresOf(row).mail) return false; // compte sans accès au mail (calendrier seul)
     if (this.syncing.has(accountId)) return false;
     this.syncing.add(accountId);
     // L'erreur est déjà enregistrée sur le compte et notifiée à l'UI : on ne la laisse pas remonter en « unhandled rejection ».
@@ -132,65 +69,37 @@ export class MailService {
   private upsert(accountId: string, m: MailMessage) {
     this.d.db
       .prepare(
-        `INSERT INTO mails(id, account_id, remote_id, thread_id, subject, from_name, from_addr, to_addrs, date, snippet, body, labels, attachments, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `INSERT INTO mails(id, account_id, remote_id, thread_id, subject, from_name, from_addr, to_addrs, date, snippet, body, labels, attachments, rfc_id, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET subject=excluded.subject, from_name=excluded.from_name, from_addr=excluded.from_addr,
            to_addrs=excluded.to_addrs, date=excluded.date, snippet=excluded.snippet, body=excluded.body,
-           labels=excluded.labels, attachments=excluded.attachments`,
+           labels=excluded.labels, rfc_id=excluded.rfc_id,
+           attachments=CASE WHEN excluded.attachments = '[]' THEN mails.attachments ELSE excluded.attachments END`,
       )
       .run(
         `${accountId}:${m.id}`, accountId, m.id, m.threadId, m.subject, m.fromName, m.fromAddr, m.to, m.date,
-        m.snippet, m.bodyText, JSON.stringify(m.labels), JSON.stringify(m.attachments), Date.now(),
+        m.snippet, m.bodyText, JSON.stringify(m.labels), JSON.stringify(m.attachments), m.messageId ?? null, this.now(),
       );
   }
 
   async sync(accountId: string): Promise<{ added: number; deleted: number }> {
     const db = this.d.db;
-    const acc = db.prepare("SELECT id, provider, email, tokens, history_id FROM accounts WHERE id=?").get(accountId) as
-      | AccountRow
-      | undefined;
+    const acc = db.prepare("SELECT id, history_id FROM accounts WHERE id=?").get(accountId) as { id: string; history_id: string | null } | undefined;
     if (!acc) throw new Error("Compte introuvable");
     db.prepare("UPDATE accounts SET sync_status='syncing', sync_error=NULL WHERE id=?").run(accountId);
     this.d.notify("mail.event", { accountId, status: "syncing" });
     try {
-      const gmail = new GmailClient({
-        getAccessToken: () => this.auth.accessToken(acc),
-        refreshAccessToken: () => this.auth.accessToken(acc, true),
-        fetch: this.d.fetch,
-        sleep: this.d.sleep,
-      });
-
-      const fetchAndStore = async (ids: string[]) => {
-        let n = 0;
-        await pool(ids, CONCURRENCY, async (id) => {
-          const m = await gmail.getMessage(id);
-          if (m) (this.upsert(accountId, m), n++);
-        });
-        return n;
-      };
-
-      let added = 0;
+      const provider = this.d.accounts.mailProvider(accountId);
+      if (!provider) throw new Error("Ce compte n'a pas accès au mail");
+      const known = (db.prepare("SELECT remote_id AS r FROM mails WHERE account_id=?").all(accountId) as { r: string }[]).map((x) => x.r);
+      const out = await provider.sync(acc.history_id, known);
       let deleted = 0;
-      let historyId = acc.history_id;
-      let full = !historyId;
-      if (historyId) {
-        try {
-          const ch = await gmail.changesSince(historyId);
-          added = await fetchAndStore(ch.added);
-          for (const id of ch.deleted) deleted += Number(db.prepare("DELETE FROM mails WHERE id=?").run(`${accountId}:${id}`).changes);
-          historyId = ch.historyId;
-        } catch (e) {
-          if (!(e instanceof HistoryExpiredError)) throw e;
-          full = true;
-        }
-      }
-      if (full) {
-        // On relève le point de départ AVANT de lister, pour ne rater aucun mail arrivé pendant la synchro.
-        const profile = await gmail.profile();
-        added = await fetchAndStore(await gmail.listIds(INITIAL_QUERY, INITIAL_MAX));
-        historyId = profile.historyId;
-      }
-      db.prepare("UPDATE accounts SET history_id=?, sync_status='idle', last_sync_at=? WHERE id=?").run(historyId, Date.now(), accountId);
+      db.transaction(() => {
+        for (const m of out.upserts) this.upsert(accountId, m);
+        for (const id of out.deleteIds) deleted += Number(db.prepare("DELETE FROM mails WHERE id=?").run(`${accountId}:${id}`).changes);
+        db.prepare("UPDATE accounts SET history_id=?, sync_status='idle', last_sync_at=? WHERE id=?").run(out.cursor, this.now(), accountId);
+      })();
+      const added = out.upserts.length;
       if (added || deleted) audit(db, "ai", "mail.sync", { accountId, added, deleted });
       this.d.notify("mail.event", { accountId, status: "done", added, deleted });
       return { added, deleted };
@@ -231,11 +140,94 @@ export class MailService {
     const r = this.d.db
       .prepare(
         `SELECT id, account_id AS accountId, subject, from_name AS fromName, from_addr AS fromAddr, to_addrs AS toAddrs,
-                date, body, attachments, category, summary FROM mails WHERE id=?`,
+                date, body, attachments, category, summary, labels FROM mails WHERE id=?`,
       )
       .get(id) as any;
     if (!r) throw new Error("Mail introuvable");
-    return { ...r, attachments: JSON.parse(r.attachments) };
+    return { ...r, attachments: JSON.parse(r.attachments) as StoredAttachment[], labels: JSON.parse(r.labels) as string[] };
+  }
+
+  // --- pièces jointes ---
+
+  /**
+   * Télécharge les pièces jointes exploitables d'un mail (formats pris en charge, ≤ 15 Mo) et les indexe comme documents,
+   * reliés au mail. Les petites images (logos) et les formats inconnus sont ignorés ; les doublons sont écartés par empreinte.
+   */
+  async importAttachments(mailId: string): Promise<{ imported: number; skipped: { name: string; reason: string }[] }> {
+    const db = this.d.db;
+    const row = db.prepare("SELECT account_id AS accountId, remote_id AS remoteId, attachments FROM mails WHERE id=?").get(mailId) as
+      | { accountId: string; remoteId: string; attachments: string }
+      | undefined;
+    if (!row) throw new Error("Mail introuvable");
+    const atts = JSON.parse(row.attachments) as StoredAttachment[];
+    const skipped: { name: string; reason: string }[] = [];
+    if (!atts.length) return { imported: 0, skipped };
+    const provider = this.d.accounts.mailProvider(row.accountId);
+    if (!provider) throw new Error("Ce compte n'a pas accès au mail");
+    const hasOcr = !!this.d.settings().ai.routes.ocr;
+    const dir = join(this.d.dataDir(), "attachments", createHash("sha1").update(mailId).digest("hex").slice(0, 16));
+    let imported = 0;
+
+    for (const [i, a] of atts.entries()) {
+      if (a.documentId) continue;
+      const image = /^image\//.test(a.mime);
+      if (!isSupported(a.name)) { skipped.push({ name: a.name, reason: "format non pris en charge" }); continue; }
+      if (a.size > ATTACH_MAX_BYTES) { skipped.push({ name: a.name, reason: "trop volumineuse (15 Mo max)" }); continue; }
+      if (image && a.size > 0 && a.size < IMAGE_MIN_BYTES) { skipped.push({ name: a.name, reason: "image trop petite (logo ?)" }); continue; }
+      if (image && !hasOcr) { skipped.push({ name: a.name, reason: "image : configurez une route « OCR »" }); continue; }
+      if (imported >= ATTACH_MAX_PER_MAIL) { skipped.push({ name: a.name, reason: `limite de ${ATTACH_MAX_PER_MAIL} pièces jointes par mail` }); continue; }
+      try {
+        const buf = await provider.fetchAttachment(row.remoteId, a);
+        if (!buf.length || buf.length > ATTACH_MAX_BYTES) throw new Error("contenu vide ou trop volumineux");
+        mkdirSync(dir, { recursive: true });
+        const file = join(dir, `${i}-${safeName(a.name)}`);
+        writeFileSync(file, buf);
+        const doc = await this.d.documents.add(file, { sourceRef: { type: "mail", id: mailId } });
+        a.documentId = doc.id;
+        imported++;
+      } catch (e) {
+        skipped.push({ name: a.name, reason: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    db.prepare("UPDATE mails SET attachments=? WHERE id=?").run(JSON.stringify(atts), mailId);
+    if (imported) audit(db, "ai", "mail.attachments", { mailId, imported });
+    return { imported, skipped };
+  }
+
+  // --- envoi (action sensible) ---
+
+  /**
+   * Envoie un brouillon de réponse. Trois verrous : réglage « autoriser l'envoi » activé, compte autorisé à envoyer,
+   * et confirmation explicite de l'utilisateur pour CE message. Jamais appelé par l'agent, un plugin ou le chat.
+   */
+  async sendDraft(p: { draftId: string; to?: string[]; cc?: string[]; subject?: string; confirm: boolean }) {
+    if (p.confirm !== true) throw new Error("Confirmation explicite requise avant tout envoi.");
+    if (!this.d.settings().mail.allowSend) throw new Error("L'envoi est désactivé (Settings › Comptes › « Autoriser l'envoi de mails »).");
+    const db = this.d.db;
+    const sentLastHour = (db.prepare("SELECT count(*) AS n FROM audit_log WHERE action='mail.send' AND at > ?").get(this.now() - 3600_000) as { n: number }).n;
+    if (sentLastHour >= SEND_LIMIT_PER_HOUR) throw new Error(`Limite de sécurité atteinte (${SEND_LIMIT_PER_HOUR} envois par heure).`);
+
+    const dr = db.prepare("SELECT id, mail_id AS mailId, body, sent_at AS sentAt FROM drafts WHERE id=?").get(p.draftId) as
+      | { id: string; mailId: string; body: string; sentAt: number | null }
+      | undefined;
+    if (!dr) throw new Error("Brouillon introuvable");
+    if (dr.sentAt) throw new Error("Ce brouillon a déjà été envoyé.");
+    const mail = db.prepare("SELECT account_id AS accountId, remote_id AS remoteId, thread_id AS threadId, subject, from_addr AS fromAddr, rfc_id AS rfcId FROM mails WHERE id=?").get(dr.mailId) as any;
+    if (!mail) throw new Error("Mail d'origine introuvable");
+    const provider = this.d.accounts.mailProvider(mail.accountId);
+    if (!provider?.send) throw new Error("Ce compte n'est pas autorisé à envoyer (reconnectez-le avec l'envoi activé, ou renseignez le serveur SMTP).");
+    const account = this.d.accounts.row(mail.accountId);
+
+    const to = (p.to?.length ? p.to : [mail.fromAddr]).map((x) => String(x).trim());
+    const subject = (p.subject?.trim() || (/^re\s*:/i.test(mail.subject) ? mail.subject : `Re: ${mail.subject}`)).slice(0, 300);
+    await provider.send({
+      from: account.email, to, cc: p.cc, subject, text: dr.body,
+      replyTo: { remoteId: mail.remoteId, messageId: mail.rfcId ?? undefined, threadId: mail.threadId ?? undefined, senderAddr: mail.fromAddr },
+    });
+    db.prepare("UPDATE drafts SET sent_at=? WHERE id=?").run(this.now(), dr.id);
+    // Journal : destinataires et objet, jamais le corps du message.
+    audit(db, "user", "mail.send", { mailId: dr.mailId, accountId: mail.accountId, to, subject });
+    return { sent: true, to };
   }
 }
 
@@ -243,3 +235,5 @@ function ftsExpr(q: string): string | null {
   const words = q.normalize("NFKC").match(/[\p{L}\p{N}]{2,}/gu);
   return words?.length ? words.slice(0, 12).map((w, i, a) => (i === a.length - 1 ? `"${w}"*` : `"${w}"`)).join(" AND ") : null;
 }
+
+void extname;

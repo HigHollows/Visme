@@ -10,7 +10,9 @@ import type { Db } from "@assistant/db";
 
 export const SCOPES = {
   mail: "https://www.googleapis.com/auth/gmail.readonly",
+  send: "https://www.googleapis.com/auth/gmail.send",
   calendar: "https://www.googleapis.com/auth/calendar.events.readonly",
+  calendarWrite: "https://www.googleapis.com/auth/calendar.events",
 } as const;
 export type Feature = keyof typeof SCOPES;
 
@@ -51,8 +53,10 @@ export class GoogleAuth {
   /** Les comptes créés avant l'ajout du calendrier n'ont pas de `scope` stocké : ils n'ont que le mail. */
   static features(tokensJson: string): Record<Feature, boolean> {
     const scope = (JSON.parse(tokensJson) as Tokens).scope;
-    if (scope === undefined) return { mail: true, calendar: false };
-    return { mail: scope.includes(SCOPES.mail), calendar: scope.includes(SCOPES.calendar) };
+    if (scope === undefined) return { mail: true, send: false, calendar: false, calendarWrite: false };
+    const has = (s: string) => scope.split(/\s+/).includes(s);
+    const write = has(SCOPES.calendarWrite);
+    return { mail: has(SCOPES.mail), send: has(SCOPES.send), calendar: has(SCOPES.calendar) || write, calendarWrite: write };
   }
 
   async authorize(features: Feature[], openUrl: (url: string) => void | Promise<void>, loginHint?: string): Promise<Tokens> {

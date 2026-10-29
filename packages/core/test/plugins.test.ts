@@ -19,7 +19,7 @@ function makePlugin(opts: { manifest?: object; code?: string; files?: Record<str
 
 function setup(over: Partial<ConstructorParameters<typeof PluginManager>[0]> = {}) {
   const db = openDatabase(join(tmp("pm-"), "t.db"), { key: "k" });
-  const cal = new CalendarService({ db, auth: {} as never, notify: () => {} });
+  const cal = new CalendarService({ db, accounts: { list: () => [] } as never, settings: () => migrateSettings({}), notify: () => {} });
   const tasks = new TaskService(db);
   const proposals = new ProposalService(db, cal, tasks, new DeadlineService(db, cal, tasks));
   const memory = new MemoryService(db);

@@ -348,4 +348,14 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 10,
+    sql: `
+      ALTER TABLE mails ADD COLUMN rfc_id TEXT;                 -- Message-ID RFC 5322 (réponses dans le même fil)
+      ALTER TABLE events ADD COLUMN push_error TEXT;            -- échec d'écriture vers l'agenda distant
+      ALTER TABLE documents ADD COLUMN source_ref TEXT;         -- JSON {type, id} : mail d'origine d'une pièce jointe
+      ALTER TABLE drafts ADD COLUMN sent_at INTEGER;
+      ALTER TABLE meeting_segments ADD COLUMN track TEXT NOT NULL DEFAULT 'mic';  -- mic | system (audio des participants)
+    `,
+  },
 ];

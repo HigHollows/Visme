@@ -5,7 +5,7 @@ import type { CalendarService } from "../calendar";
 import type { DeadlineService } from "../deadlines";
 import type { MemoryService } from "../memory";
 import { handleObligations } from "./obligations";
-import { GoogleAuth } from "../google";
+import { featuresOf } from "../accounts";
 import type { MailService } from "../mail";
 import type { ProposalService } from "../proposals";
 import type { TaskService } from "../tasks";
@@ -160,9 +160,9 @@ export class Agent {
   }
 
   private async syncAccounts(stats: RunStats) {
-    const accounts = this.d.db.prepare("SELECT id, tokens FROM accounts WHERE status='ok'").all() as { id: string; tokens: string }[];
+    const accounts = this.d.db.prepare("SELECT id, provider, tokens FROM accounts WHERE status='ok'").all() as { id: string; provider: string; tokens: string }[];
     for (const a of accounts) {
-      const f = GoogleAuth.features(a.tokens);
+      const f = featuresOf(a);
       // Une erreur de synchro est déjà enregistrée sur le compte ; elle ne doit pas bloquer l'analyse du reste.
       if (f.mail) await this.d.mail.syncNow(a.id).then(() => stats.synced++, () => {});
       if (f.calendar) await this.d.cal.syncNow(a.id).then(() => stats.synced++, () => {});

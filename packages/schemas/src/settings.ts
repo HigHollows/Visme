@@ -46,6 +46,20 @@ export const settingsSchema = z.object({
       alertDays: z.array(z.number().int().min(0).max(365)).max(8).default([30, 7, 1]),
     })
     .default({}),
+  mail: z
+    .object({
+      /** L'agent télécharge et indexe les pièces jointes des mails qu'il analyse. */
+      readAttachments: z.boolean().default(true),
+      /** Autorise l'envoi d'un brouillon depuis l'application (toujours après confirmation explicite). Désactivé par défaut. */
+      allowSend: z.boolean().default(false),
+    })
+    .default({}),
+  calendar: z
+    .object({
+      /** Compte dans lequel les événements créés dans l'application (ou par l'IA) sont aussi écrits ; null = locaux seulement. */
+      writeTo: z.string().nullable().default(null),
+    })
+    .default({}),
   notifications: z
     .object({
       deadlineAlerts: z.boolean().default(true),

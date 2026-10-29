@@ -83,7 +83,7 @@ describe("administration, RGPD, diagnostics", () => {
     const t = await setup();
     await t.call("tasks.create", { title: "x" });
     const d = (await t.call("diagnostics.get")).result;
-    expect(d).toMatchObject({ schemaVersion: 9, counts: { events: 0 } });
+    expect(d).toMatchObject({ schemaVersion: 10, counts: { events: 0 } });
     expect(d.dbBytes).toBeGreaterThan(1000);
     expect(d.node).toMatch(/^v\d+/);
   });

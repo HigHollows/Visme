@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "@assistant/db";
+import { migrateSettings } from "@assistant/schemas";
 import { describe, expect, it } from "vitest";
 import { CalendarService, DeadlineService, ProposalService, TaskService } from "../src";
 import { validateObligations } from "../src/agent/analyze";
@@ -13,7 +14,7 @@ const at = (d: number) => NOW + d * DAY;
 
 function setup() {
   const db = openDatabase(join(mkdtempSync(join(tmpdir(), "dl-")), "t.db"), { key: "k" });
-  const cal = new CalendarService({ db, auth: {} as never, notify: () => {} });
+  const cal = new CalendarService({ db, accounts: { list: () => [] } as never, settings: () => migrateSettings({}), notify: () => {} });
   const tasks = new TaskService(db);
   const deadlines = new DeadlineService(db, cal, tasks);
   const proposals = new ProposalService(db, cal, tasks, deadlines);

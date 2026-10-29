@@ -78,7 +78,7 @@ export class DocumentPipeline {
   constructor(private d: PipelineDeps) {}
 
   /** Enregistre le fichier (dédoublonné par hash) et planifie l'indexation en arrière-plan. */
-  async add(path: string): Promise<{ id: string; duplicate: boolean }> {
+  async add(path: string, opts: { sourceRef?: { type: string; id: string } } = {}): Promise<{ id: string; duplicate: boolean }> {
     const name = basename(path);
     if (!isSupported(name)) throw new Error(`Format non pris en charge : ${extname(name) || name}`);
     const st = await stat(path);
@@ -97,9 +97,9 @@ export class DocumentPipeline {
       this.d.db.prepare("INSERT INTO nodes(id, type, label) VALUES (?, 'document', ?)").run(nodeId, name);
       this.d.db
         .prepare(
-          "INSERT INTO documents(id, node_id, name, path, ext, size, hash, status, created_at) VALUES (?,?,?,?,?,?,?, 'indexing', ?)",
+          "INSERT INTO documents(id, node_id, name, path, ext, size, hash, status, created_at, source_ref) VALUES (?,?,?,?,?,?,?, 'indexing', ?, ?)",
         )
-        .run(id, nodeId, name, path, extname(name).toLowerCase(), st.size, hash, now);
+        .run(id, nodeId, name, path, extname(name).toLowerCase(), st.size, hash, now, opts.sourceRef ? JSON.stringify(opts.sourceRef) : null);
     })();
     audit(this.d.db, "user", "document.add", { id, name });
     this.enqueue(id, buf);

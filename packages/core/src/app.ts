@@ -10,6 +10,8 @@ import { CalendarService } from "./calendar";
 import { handleObligations } from "./agent/obligations";
 import { DeadlineService } from "./deadlines";
 import type { Feature } from "./google";
+import { AccountService } from "./accounts";
+import type { MsFeature } from "./microsoft";
 import { MailService } from "./mail";
 import { MemoryService } from "./memory";
 import { PresetService } from "./presets";
@@ -33,6 +35,9 @@ export interface AppOptions {
   /** Ouvre une URL dans le navigateur système (injecté par le sidecar). */
   openUrl?: (url: string) => void | Promise<void>;
   sleep?: (ms: number) => Promise<void>;
+  /** Pour les tests : faux serveurs IMAP / CalDAV. */
+  imapFactory?: import("@assistant/connectors").ImapFactory;
+  dav?: (cfg: import("@assistant/connectors").CalDavConfig) => Promise<import("@assistant/connectors").DavLike>;
   /** Pour les tests : horloge et minuteries injectables. */
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => unknown;
@@ -75,6 +80,10 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   const loadSettings = (): Settings => {
     const row = need().prepare("SELECT value FROM kv WHERE key='settings'").get() as { value: string } | undefined;
     return migrateSettings(row ? JSON.parse(row.value) : {});
+  };
+
+  const saveSettings = (s: Settings) => {
+    need().prepare("INSERT INTO kv(key,value) VALUES('settings',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(s));
   };
 
   rpc.register("settings.get", () => loadSettings());
@@ -188,40 +197,83 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   rpc.register("documents.delete", (p: { id: string }) => (docs().remove(p.id), { ok: true }));
   rpc.register("documents.reindex", (p: { id: string }) => (docs().reindex(p.id), { ok: true }));
 
+  let accountSvc: AccountService | null = null;
+  const accounts = () =>
+    (accountSvc ??= new AccountService({
+      db: need(), fetch: opts.fetch, sleep: opts.sleep, imapFactory: opts.imapFactory, dav: opts.dav,
+      openUrl: opts.openUrl ?? (() => { throw new Error("Ouverture du navigateur indisponible"); }),
+    }));
   let mailSvc: MailService | null = null;
   const mail = () =>
     (mailSvc ??= new MailService({
-      db: need(),
-      fetch: opts.fetch,
-      notify,
-      sleep: opts.sleep,
-      openUrl: opts.openUrl ?? (() => { throw new Error("Ouverture du navigateur indisponible"); }),
+      db: need(), accounts: accounts(), dataDir: () => dataDirPath, settings: loadSettings, notify, fetch: opts.fetch, now: opts.now,
+      documents: { add: (path, o) => docs().add(path, o) },
     }));
+  let calSvc: CalendarService | null = null;
+  const cal = () => (calSvc ??= new CalendarService({ db: need(), accounts: accounts(), settings: loadSettings, notify }));
 
   rpc.register("google.config.get", () => {
-    const c = mail().getGoogleConfig();
+    const c = accounts().getGoogleConfig();
     return { clientId: c?.clientId ?? "", hasSecret: !!c?.clientSecret };
   });
-  rpc.register("google.config.set", (p: { clientId: string; clientSecret?: string }) => (mail().setGoogleConfig(p), { ok: true }));
-  rpc.register("accounts.list", () => mail().listAccounts());
-  let calSvc: CalendarService | null = null;
-  const cal = () =>
-    (calSvc ??= new CalendarService({ db: need(), auth: mail().auth, fetch: opts.fetch, notify, sleep: opts.sleep }));
+  rpc.register("google.config.set", (p: { clientId: string; clientSecret?: string }) => (accounts().setGoogleConfig(p), { ok: true }));
+  rpc.register("microsoft.config.get", () => {
+    const c = accounts().getMicrosoftConfig();
+    return { clientId: c?.clientId ?? "", tenant: c?.tenant ?? "common" };
+  });
+  rpc.register("microsoft.config.set", (p: { clientId: string; tenant?: string }) => (accounts().setMicrosoftConfig(p), { ok: true }));
+  rpc.register("accounts.list", () => accounts().list());
 
-  rpc.register("accounts.connectGoogle", async (p: { mail?: boolean; calendar?: boolean; loginHint?: string }) => {
-    const features: Feature[] = [...(p.mail === false ? [] : ["mail" as const]), ...(p.calendar ? ["calendar" as const] : [])];
-    const acc = await mail().connectGoogle(features, p.loginHint);
-    mail().startSync(acc.id);
-    cal().startSync(acc.id);
+  const startSyncs = (id: string) => {
+    mail().startSync(id);
+    cal().startSync(id);
+  };
+  rpc.register("accounts.connectGoogle", async (p: { mail?: boolean; calendar?: boolean; send?: boolean; calendarWrite?: boolean; loginHint?: string }) => {
+    const features: Feature[] = [
+      ...(p.mail === false ? [] : ["mail" as const]),
+      ...(p.send ? ["send" as const] : []),
+      ...(p.calendar || p.calendarWrite ? ["calendar" as const] : []),
+      ...(p.calendarWrite ? ["calendarWrite" as const] : []),
+    ];
+    const acc = await accounts().connectGoogle(features, p.loginHint);
+    startSyncs(acc.id);
     return acc;
   });
-  rpc.register("accounts.remove", (p: { id: string }) => (mail().removeAccount(p.id), { ok: true }));
+  rpc.register("accounts.connectMicrosoft", async (p: { mail?: boolean; calendar?: boolean; send?: boolean; calendarWrite?: boolean; loginHint?: string }) => {
+    const features: MsFeature[] = [
+      ...(p.mail === false ? [] : ["mail" as const]),
+      ...(p.send ? ["send" as const] : []),
+      ...(p.calendar || p.calendarWrite ? ["calendar" as const] : []),
+      ...(p.calendarWrite ? ["calendarWrite" as const] : []),
+    ];
+    const acc = await accounts().connectMicrosoft(features, p.loginHint);
+    startSyncs(acc.id);
+    return acc;
+  });
+  rpc.register("accounts.addImap", async (p: any) => {
+    const acc = await accounts().addImap(p);
+    startSyncs(acc.id);
+    return acc;
+  });
+  rpc.register("accounts.addCalDav", async (p: any) => {
+    const acc = await accounts().addCalDav(p);
+    startSyncs(acc.id);
+    return acc;
+  });
+  rpc.register("accounts.remove", (p: { id: string }) => {
+    // Si les événements étaient écrits vers ce compte, on retire le réglage pour ne pas pointer dans le vide.
+    const s = loadSettings();
+    if (s.calendar.writeTo === p.id) saveSettings({ ...s, calendar: { writeTo: null } });
+    accounts().remove(p.id);
+    return { ok: true };
+  });
   rpc.register("mail.sync", (p: { accountId?: string }) => {
-    const ids = p.accountId ? [p.accountId] : (mail().listAccounts() as { id: string }[]).map((a) => a.id);
+    const ids = p.accountId ? [p.accountId] : accounts().list().map((a) => a.id);
     return { started: ids.filter((id) => mail().startSync(id)).length };
   });
+  rpc.register("mail.importAttachments", (p: { id: string }) => mail().importAttachments(p.id));
   rpc.register("calendar.sync", (p: { accountId?: string }) => {
-    const ids = p.accountId ? [p.accountId] : (mail().listAccounts() as { id: string }[]).map((a) => a.id);
+    const ids = p.accountId ? [p.accountId] : accounts().list().map((a) => a.id);
     return { started: ids.filter((id) => cal().startSync(id)).length };
   });
   rpc.register("calendar.list", (p: { from: number; to: number }) => cal().list(Number(p.from), Number(p.to)));
@@ -344,6 +396,8 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   rpc.register("drafts.reply", (p: any) => drafts().reply(p));
   rpc.register("drafts.update", (p: { id: string; body: string }) => (drafts().update(p.id, p.body), { ok: true }));
   rpc.register("drafts.delete", (p: { id: string }) => (drafts().delete(p.id), { ok: true }));
+  /** Envoi d'un brouillon : action sensible, exige `confirm: true`, le réglage « autoriser l'envoi » et un compte autorisé. */
+  rpc.register("drafts.send", (p: { draftId: string; to?: string[]; cc?: string[]; subject?: string; confirm: boolean }) => mail().sendDraft(p));
 
   rpc.register("presets.list", () => presets().list());
   rpc.register("presets.create", (p: any) => presets().create(p));

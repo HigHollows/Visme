@@ -45,6 +45,8 @@ describe("plugin Graphify de bout en bout", () => {
     await vi.waitFor(async () => {
       const g = (await call("memory.graph", {})).result;
       expect(g.edges.some((e: any) => e.rel === "dirige")).toBe(true);
+      // le plugin ajoute les liens un par un : on attend aussi les liens « mentions » avant de vérifier
+      expect(g.edges.filter((e: any) => e.rel === "mentions" && String(e.src).startsWith("doc:")).length).toBeGreaterThanOrEqual(2);
     }, { timeout: 15_000 });
 
     const g = (await call("memory.graph", {})).result;

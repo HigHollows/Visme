@@ -146,7 +146,7 @@ describe("calendrier Google", () => {
   it("compte mail seul : le calendrier est refusé", async () => {
     const { call } = await setup(MAIL);
     const acc = (await call("accounts.connectGoogle", { mail: true, calendar: false })).result;
-    expect(acc.features).toEqual({ mail: true, calendar: false });
+    expect(acc.features).toEqual({ mail: true, send: false, calendar: false, calendarWrite: false });
     expect((await call("calendar.sync", { accountId: acc.id })).result.started).toBe(0);
   });
 

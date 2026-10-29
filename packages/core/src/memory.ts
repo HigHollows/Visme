@@ -55,6 +55,12 @@ export class MemoryService {
       }
     }
 
+    // Pièces jointes importées : le document est relié à son mail d'origine.
+    for (const d of db.prepare("SELECT node_id AS nodeId, source_ref AS sourceRef FROM documents WHERE source_ref IS NOT NULL").all() as { nodeId: string; sourceRef: string }[]) {
+      const ref = JSON.parse(d.sourceRef) as { type: string; id: string };
+      if (ref.type === "mail") addEdge(`mail:${ref.id}`, d.nodeId, "attachment");
+    }
+
     // Mails récents : expéditeur, et lien vers ce que l'agent en a tiré.
     for (const m of db.prepare("SELECT id, subject, from_name AS fromName, from_addr AS fromAddr, category FROM mails ORDER BY date DESC LIMIT ?").all(MAX_MAILS) as { id: string; subject: string; fromName: string; fromAddr: string; category: string | null }[]) {
       const mid = `mail:${m.id}`;
