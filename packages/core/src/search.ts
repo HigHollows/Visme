@@ -2,7 +2,7 @@ import type { AIRouter } from "@assistant/ai";
 import type { Db } from "@assistant/db";
 
 export interface SearchItem {
-  type: "document" | "conversation";
+  type: "document" | "conversation" | "mail";
   id: string;
   title: string;
   snippet: string;
@@ -79,6 +79,19 @@ function conversationHits(db: Db, q: string): SearchItem[] {
   return rows.map((r, i) => ({ type: "conversation", id: r.id, title: r.title, snippet: r.snippet ?? "", score: 1 / (RRF_K + i) }));
 }
 
+function mailHits(db: Db, q: string): SearchItem[] {
+  const expr = ftsQuery(q, "and") ?? null;
+  if (!expr) return [];
+  const rows = db
+    .prepare(
+      `SELECT m.id, m.subject AS title, snippet(mails_fts, 3, '«', '»', ' … ', 20) AS snippet
+       FROM mails_fts JOIN mails m ON m.rowid = mails_fts.rowid
+       WHERE mails_fts MATCH ? ORDER BY bm25(mails_fts) LIMIT 10`,
+    )
+    .all(expr) as { id: string; title: string; snippet: string }[];
+  return rows.map((r, i) => ({ type: "mail", ...r, score: 1 / (RRF_K + i) }));
+}
+
 /** Recherche hybride : mots-clés (BM25) + sémantique (KNN), fusionnés par Reciprocal Rank Fusion. */
 export async function search(db: Db, router: AIRouter | null, q: string, limit = 20): Promise<SearchItem[]> {
   q = q.trim();
@@ -104,5 +117,5 @@ export async function search(db: Db, router: AIRouter | null, q: string, limit =
     if (!byDoc.has(hit.docId))
       byDoc.set(hit.docId, { type: "document", id: hit.docId, title: hit.title, snippet: hit.text, score });
   }
-  return [...byDoc.values(), ...conversationHits(db, q)].slice(0, limit);
+  return [...[...byDoc.values()].slice(0, 10), ...mailHits(db, q), ...conversationHits(db, q)].slice(0, limit);
 }

@@ -73,6 +73,9 @@ importers:
       '@assistant/ai':
         specifier: workspace:*
         version: link:../ai
+      '@assistant/connectors':
+        specifier: workspace:*
+        version: link:../connectors
       '@assistant/db':
         specifier: workspace:*
         version: link:../db

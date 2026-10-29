@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { rpc } from "./rpc";
 
 export interface PaletteAction { id: string; label: string; run: () => void }
-interface Hit { type: "document" | "conversation"; id: string; title: string; snippet: string }
+interface Hit { type: "document" | "conversation" | "mail"; id: string; title: string; snippet: string }
 type Row = { key: string; group: string; title: string; sub?: string; run: () => void };
 
-const GROUP: Record<Hit["type"], string> = { document: "Documents", conversation: "Conversations" };
+const GROUP: Record<Hit["type"], string> = { document: "Documents", conversation: "Conversations", mail: "Mails" };
 
 /** Recherche globale (Cmd/Ctrl+K) : actions rapides + recherche hybride dans les données. */
 export function SearchPalette({ actions, onOpen, onClose }: {
@@ -69,7 +69,7 @@ export function SearchPalette({ actions, onOpen, onClose }: {
           role="combobox" aria-expanded="true" aria-controls="palette-list"
           aria-label="Rechercher ou saisir une commande"
           className="w-full border-b border-neutral-200 bg-transparent px-4 py-3 text-base outline-none dark:border-neutral-700"
-          placeholder="Rechercher dans vos documents, conversations… ou lancer une action"
+          placeholder="Rechercher dans vos mails, documents, conversations… ou lancer une action"
           value={q} onChange={(e) => setQ(e.target.value)}
         />
         <ul id="palette-list" role="listbox" className="max-h-96 overflow-y-auto py-1">

@@ -6,3 +6,4 @@ export * from "./search";
 export * from "./documents/extract";
 export * from "./documents/chunk";
 export * from "./documents/pipeline";
+export * from "./mail";

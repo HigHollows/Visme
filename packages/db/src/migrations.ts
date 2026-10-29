@@ -99,4 +99,52 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 5,
+    sql: `
+      CREATE TABLE accounts (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,           -- google | microsoft | imap
+        email TEXT NOT NULL,
+        tokens TEXT NOT NULL,             -- JSON ; la base entière est chiffrée (SQLCipher)
+        history_id TEXT,
+        status TEXT NOT NULL DEFAULT 'ok',      -- ok | reauth
+        sync_status TEXT NOT NULL DEFAULT 'idle', -- idle | syncing | error
+        sync_error TEXT,
+        last_sync_at INTEGER,
+        created_at INTEGER NOT NULL,
+        UNIQUE (provider, email)
+      );
+      CREATE TABLE mails (
+        id TEXT PRIMARY KEY,              -- <account_id>:<remote_id>
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        remote_id TEXT NOT NULL,
+        thread_id TEXT,
+        subject TEXT NOT NULL,
+        from_name TEXT NOT NULL,
+        from_addr TEXT NOT NULL,
+        to_addrs TEXT NOT NULL,
+        date INTEGER NOT NULL,
+        snippet TEXT NOT NULL,
+        body TEXT NOT NULL,
+        labels TEXT NOT NULL DEFAULT '[]',
+        attachments TEXT NOT NULL DEFAULT '[]',
+        category TEXT,
+        summary TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX mails_account_date ON mails(account_id, date DESC);
+      CREATE VIRTUAL TABLE mails_fts USING fts5(subject, from_name, from_addr, body, content='mails', content_rowid='rowid');
+      CREATE TRIGGER mails_ai AFTER INSERT ON mails BEGIN
+        INSERT INTO mails_fts(rowid, subject, from_name, from_addr, body) VALUES (new.rowid, new.subject, new.from_name, new.from_addr, new.body);
+      END;
+      CREATE TRIGGER mails_ad AFTER DELETE ON mails BEGIN
+        INSERT INTO mails_fts(mails_fts, rowid, subject, from_name, from_addr, body) VALUES ('delete', old.rowid, old.subject, old.from_name, old.from_addr, old.body);
+      END;
+      CREATE TRIGGER mails_au AFTER UPDATE ON mails BEGIN
+        INSERT INTO mails_fts(mails_fts, rowid, subject, from_name, from_addr, body) VALUES ('delete', old.rowid, old.subject, old.from_name, old.from_addr, old.body);
+        INSERT INTO mails_fts(rowid, subject, from_name, from_addr, body) VALUES (new.rowid, new.subject, new.from_name, new.from_addr, new.body);
+      END;
+    `,
+  },
 ];

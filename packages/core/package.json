@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "dependencies": {
     "@assistant/ai": "workspace:*",
-    "@assistant/db": "workspace:*",
+    "@assistant/db": "workspace:*", "@assistant/connectors": "workspace:*",
     "@assistant/schemas": "workspace:*",
     "exceljs": "^4.4.0",
     "fflate": "^0.8.3",

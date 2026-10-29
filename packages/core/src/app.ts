@@ -5,12 +5,21 @@ import { migrateSettings, exportSettings, type Settings } from "@assistant/schem
 import { createProvider } from "@assistant/ai";
 import { buildProviders, buildRouter, usageTotals } from "./ai";
 import { DocumentPipeline } from "./documents/pipeline";
+import { MailService } from "./mail";
 import { search } from "./search";
 import { registerChat, type Notify } from "./chat";
 import { RpcError, RpcServer } from "./rpc";
 
 /** Construit le serveur RPC. La base n'est ouverte qu'après `init` (clé fournie par le shell). */
-export function createApp(opts: { fetch?: typeof fetch; notify?: Notify } = {}): RpcServer {
+export interface AppOptions {
+  fetch?: typeof fetch;
+  notify?: Notify;
+  /** Ouvre une URL dans le navigateur système (injecté par le sidecar). */
+  openUrl?: (url: string) => void | Promise<void>;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export function createApp(opts: AppOptions = {}): RpcServer {
   const rpc = new RpcServer();
   /** Clés API en mémoire uniquement ; elles viennent du trousseau via le shell. */
   const keys = new Map<string, string>();
@@ -114,6 +123,35 @@ export function createApp(opts: { fetch?: typeof fetch; notify?: Notify } = {}):
   });
   rpc.register("documents.delete", (p: { id: string }) => (docs().remove(p.id), { ok: true }));
   rpc.register("documents.reindex", (p: { id: string }) => (docs().reindex(p.id), { ok: true }));
+
+  let mailSvc: MailService | null = null;
+  const mail = () =>
+    (mailSvc ??= new MailService({
+      db: need(),
+      fetch: opts.fetch,
+      notify,
+      sleep: opts.sleep,
+      openUrl: opts.openUrl ?? (() => { throw new Error("Ouverture du navigateur indisponible"); }),
+    }));
+
+  rpc.register("google.config.get", () => {
+    const c = mail().getGoogleConfig();
+    return { clientId: c?.clientId ?? "", hasSecret: !!c?.clientSecret };
+  });
+  rpc.register("google.config.set", (p: { clientId: string; clientSecret?: string }) => (mail().setGoogleConfig(p), { ok: true }));
+  rpc.register("accounts.list", () => mail().listAccounts());
+  rpc.register("accounts.connectGoogle", async () => {
+    const acc = await mail().connectGoogle();
+    mail().startSync(acc.id);
+    return acc;
+  });
+  rpc.register("accounts.remove", (p: { id: string }) => (mail().removeAccount(p.id), { ok: true }));
+  rpc.register("mail.sync", (p: { accountId?: string }) => {
+    const ids = p.accountId ? [p.accountId] : (mail().listAccounts() as { id: string }[]).map((a) => a.id);
+    return { started: ids.filter((id) => mail().startSync(id)).length };
+  });
+  rpc.register("mail.list", (p: any) => mail().list(p ?? {}));
+  rpc.register("mail.get", (p: { id: string }) => mail().get(p.id));
 
   rpc.register("search.query", async (p: { q: string; limit?: number }) =>
     search(need(), getRouter(), String(p.q ?? "").slice(0, 500), Math.min(p.limit ?? 20, 50)),

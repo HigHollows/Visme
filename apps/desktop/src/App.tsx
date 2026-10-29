@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Chat } from "./pages/Chat";
 import { Documents } from "./pages/Documents";
+import { Mails } from "./pages/Mails";
+import { SettingsAccounts } from "./pages/SettingsAccounts";
 import { SearchPalette } from "./SearchPalette";
 import { SettingsAI } from "./pages/SettingsAI";
 
@@ -12,8 +14,9 @@ const SECTIONS = [
 
 export function App() {
   const [active, setActive] = useState<(typeof SECTIONS)[number]>("Accueil");
+  const [settingsTab, setSettingsTab] = useState<"IA" | "Comptes">("Comptes");
   const [palette, setPalette] = useState(false);
-  const [target, setTarget] = useState<{ chat?: string | null; doc?: string | null }>({});
+  const [target, setTarget] = useState<{ chat?: string | null; doc?: string | null; mail?: string | null }>({});
   const [version, setVersion] = useState<string>("…");
 
   const [autonomy, setAutonomy] = useState<string>("…");
@@ -55,11 +58,18 @@ export function App() {
         <h1 className="text-2xl font-semibold">{active}</h1>
         {active === "Settings" ? (
           <div className="mt-4">
-            <h2 className="mb-4 text-sm font-medium uppercase tracking-wide text-neutral-500">IA</h2>
-            <SettingsAI />
+            <div role="tablist" aria-label="Sections des réglages" className="mb-4 flex gap-2">
+              {(["Comptes", "IA"] as const).map((t) => (
+                <button key={t} role="tab" aria-selected={settingsTab === t} onClick={() => setSettingsTab(t)}
+                  className={`rounded-md px-3 py-1 text-sm ${settingsTab === t ? "bg-neutral-100 font-medium dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-900"}`}>{t}</button>
+              ))}
+            </div>
+            {settingsTab === "IA" ? <SettingsAI /> : <SettingsAccounts />}
           </div>
         ) : active === "Chat" ? (
           <div className="mt-4"><Chat openId={target.chat} /></div>
+        ) : active === "Mails" ? (
+          <div className="mt-4"><Mails selectedId={target.mail} /></div>
         ) : active === "Documents" ? (
           <div className="mt-4"><Documents selectedId={target.doc} /></div>
         ) : (
@@ -77,6 +87,7 @@ export function App() {
           ]}
           onOpen={(type, id) => {
             if (type === "document") { setTarget({ doc: id }); setActive("Documents"); }
+            else if (type === "mail") { setTarget({ mail: id }); setActive("Mails"); }
             else { setTarget({ chat: id }); setActive("Chat"); }
           }}
           onClose={() => setPalette(false)}
