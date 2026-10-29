@@ -20,8 +20,12 @@ const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: "inherit"
 
 function targetTriple() {
   if (process.env.TAURI_TARGET_TRIPLE) return process.env.TAURI_TARGET_TRIPLE;
-  const v = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
-  return /host: (.+)/.exec(v)[1].trim();
+  try {
+    const v = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
+    return /host: (.+)/.exec(v)[1].trim();
+  } catch {
+    throw new Error("rustc introuvable : installez Rust (https://rustup.rs) ou définissez TAURI_TARGET_TRIPLE (ex. x86_64-apple-darwin).");
+  }
 }
 
 rmSync(join(tauri, "resources"), { recursive: true, force: true });

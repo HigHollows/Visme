@@ -46,6 +46,16 @@ Téléchargez l'installateur de votre système depuis la page **Releases** du d�
 
 Anthropic ne propose ni embeddings ni transcription : configurez ces deux tâches avec OpenAI (ou un fournisseur compatible).
 
+## Limites connues et feuille de route
+
+- **Comptes** : Gmail et Google Agenda uniquement (lecture seule). À venir : Outlook/Microsoft 365, IMAP/SMTP, CalDAV, écriture vers l'agenda, envoi de brouillons.
+- **Pièces jointes** des mails : listées, pas encore lues par le pipeline de documents. **PDF scannés** : non gérés (les images le sont, via OCR).
+- **Réunions** : micro uniquement (audio système via un périphérique de bouclage) ; fichiers audio ≤ 25 Mo.
+- **Verrouillage** : mot de passe seulement (pas de biométrie). **Langue** de l'interface : français.
+- **Plugins** : bac à sable applicatif, pas une isolation au niveau de l'OS ([docs/security.md](docs/security.md)).
+- **Windows** : build et test de fumée prévus en CI ; la suite de tests complète n'y a pas encore été validée.
+- **Installateurs non signés** (voir Installation) — [docs/release.md](docs/release.md) décrit le passage à des builds signés.
+
 ## Développement
 
 Prérequis : **Node ≥ 22** (24 recommandé), **pnpm** (version du champ `packageManager`), **Rust stable**, et sur macOS les outils Xcode en ligne de commande.
