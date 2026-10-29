@@ -6,14 +6,18 @@
   "main": "src/index.ts",
   "dependencies": {
     "@assistant/ai": "workspace:*",
-    "@assistant/db": "workspace:*",
     "@assistant/connectors": "workspace:*",
+    "@assistant/db": "workspace:*",
+    "@assistant/plugins-sdk": "workspace:*",
     "@assistant/schemas": "workspace:*",
     "exceljs": "^4.4.0",
     "fflate": "^0.8.3",
     "mammoth": "^1.13.0",
-    "unpdf": "^1.9.1",
-    "@assistant/plugins-sdk": "workspace:*"
+    "unpdf": "^1.9.1"
   },
-  "scripts": {}
+  "scripts": {},
+  "devDependencies": {
+    "@types/smtp-server": "^3.5.13",
+    "smtp-server": "^3.21.1"
+  }
 }

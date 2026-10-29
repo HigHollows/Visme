@@ -61,6 +61,8 @@ export interface ImapSetup {
   smtpSecure?: boolean;
   smtpUser?: string;
   smtpPassword?: string;
+  /** Connexion non chiffrée : refusée sauf vers la machine locale (tests, serveurs de développement). */
+  insecure?: boolean;
 }
 
 const host = (h: string) => {
@@ -159,9 +161,9 @@ export class AccountService {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Adresse e-mail invalide");
     if (!p.password) throw new Error("Mot de passe requis (utilisez un mot de passe d'application si votre fournisseur en propose)");
     const user = (p.user || email).trim();
-    const imap: ImapConfig = { host: host(p.imapHost), port: port(p.imapPort, 993), secure: p.imapSecure ?? port(p.imapPort, 993) === 993, user, pass: p.password };
+    const imap: ImapConfig = { host: host(p.imapHost), port: port(p.imapPort, 993), secure: p.imapSecure ?? port(p.imapPort, 993) === 993, user, pass: p.password, ...(p.insecure && { insecure: true }) };
     const smtp: SmtpConfig | undefined = p.smtpHost
-      ? { host: host(p.smtpHost), port: port(p.smtpPort, 587), secure: p.smtpSecure ?? port(p.smtpPort, 587) === 465, user: (p.smtpUser || user).trim(), pass: p.smtpPassword || p.password }
+      ? { host: host(p.smtpHost), port: port(p.smtpPort, 587), secure: p.smtpSecure ?? port(p.smtpPort, 587) === 465, user: (p.smtpUser || user).trim(), pass: p.smtpPassword || p.password, ...(p.insecure && { insecure: true }) }
       : undefined;
     const factory = this.d.imapFactory ?? realImapFactory;
     await testImap(imap, factory).catch((e) => { throw new Error(`Connexion IMAP impossible : ${e instanceof Error ? e.message : e}`); });
