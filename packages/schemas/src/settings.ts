@@ -38,6 +38,18 @@ export const settingsSchema = z.object({
         .default({}),
     })
     .default({}),
+  deadlines: z
+    .object({
+      /** Alertes avant la prochaine échéance et avant la date limite de résiliation. */
+      alertDays: z.array(z.number().int().min(0).max(365)).max(8).default([30, 7, 1]),
+    })
+    .default({}),
+  style: z
+    .object({
+      /** Apprentissage de mon style depuis mes mails envoyés : désactivé tant que je n'ai pas donné mon accord. */
+      learningEnabled: z.boolean().default(false),
+    })
+    .default({}),
   agent: z
     .object({
       /** Désactivé par défaut : l'analyse envoie des extraits de mails à l'IA, ce qui exige un accord explicite. */

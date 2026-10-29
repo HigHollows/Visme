@@ -9,6 +9,8 @@ import { Agent } from "./agent/agent";
 import { CalendarService } from "./calendar";
 import type { Feature } from "./google";
 import { MailService } from "./mail";
+import { MemoryService } from "./memory";
+import { PresetService } from "./presets";
 import { ProposalService } from "./proposals";
 import { search } from "./search";
 import { TaskService } from "./tasks";
@@ -191,6 +193,34 @@ export function createApp(opts: AppOptions = {}): RpcServer {
       notify, now: opts.now, setTimer: opts.setTimer, clearTimer: opts.clearTimer,
     }));
 
+  let memSvc: MemoryService | null = null;
+  const memory = () => (memSvc ??= new MemoryService(need()));
+  let presetSvc: PresetService | null = null;
+  const presets = () => (presetSvc ??= new PresetService(need()));
+
+  registerChat({
+    rpc, db: need, settings: loadSettings, keys, fetch: opts.fetch, notify,
+    presets, memory, proposals, cal,
+  });
+
+  rpc.register("presets.list", () => presets().list());
+  rpc.register("presets.create", (p: any) => presets().create(p));
+  rpc.register("presets.update", (p: any) => presets().update(p.id, p));
+  rpc.register("presets.delete", (p: { id: string }) => (presets().delete(p.id), { ok: true }));
+  rpc.register("presets.reset", (p: { id: string }) => presets().reset(p.id));
+
+  rpc.register("memory.graph", (p: { types?: string[] }) => {
+    memory().rebuild(); // dérivé de l'état courant : toujours à jour, et peu coûteux
+    return memory().graph(p ?? {});
+  });
+  rpc.register("memory.neighbors", (p: { id: string }) => memory().neighbors(p.id, 30));
+  rpc.register("memory.addNode", (p: { type: string; label: string }) => ({ id: memory().addNode(p) }));
+  rpc.register("memory.renameNode", (p: { id: string; label: string }) => (memory().renameNode(p.id, p.label), { ok: true }));
+  rpc.register("memory.addEdge", (p: { src: string; dst: string; rel: string }) => (memory().addEdge(p.src, p.dst, p.rel), { ok: true }));
+  rpc.register("memory.deleteEdge", (p: { src: string; dst: string; rel: string }) => (memory().deleteEdge(p.src, p.dst, p.rel), { ok: true }));
+  rpc.register("memory.forget", (p: { id: string }) => (memory().forget(p.id), { ok: true }));
+  rpc.register("memory.clear", () => (memory().clearAll(), { ok: true }));
+
   rpc.register("tasks.list", (p: { status?: "open" | "done" }) => tasks().list(p ?? {}));
   rpc.register("tasks.create", (p: any) => tasks().create(p));
   rpc.register("tasks.update", (p: any) => tasks().update(p.id, p));
@@ -237,7 +267,6 @@ export function createApp(opts: AppOptions = {}): RpcServer {
     search(need(), getRouter(), String(p.q ?? "").slice(0, 500), Math.min(p.limit ?? 20, 50)),
   );
 
-  registerChat({ rpc, db: need, settings: loadSettings, keys, fetch: opts.fetch, notify });
 
   rpc.register("audit.list", (p: { limit?: number }) =>
     need()

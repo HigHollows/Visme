@@ -232,4 +232,87 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 8,
+    sql: `
+      ALTER TABLE messages ADD COLUMN sources TEXT;            -- JSON : sources citées par l'assistant
+      ALTER TABLE conversations ADD COLUMN preset_id TEXT;
+      ALTER TABLE edges ADD COLUMN derived INTEGER NOT NULL DEFAULT 1;  -- 0 = créé à la main
+      CREATE TABLE presets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        system_prompt TEXT NOT NULL,
+        tools TEXT NOT NULL DEFAULT '[]',     -- outils autorisés
+        tone TEXT NOT NULL DEFAULT '',
+        language TEXT NOT NULL DEFAULT '',
+        provider TEXT,                        -- vide = route "chat" des réglages
+        model TEXT,
+        builtin INTEGER NOT NULL DEFAULT 0,
+        sort INTEGER NOT NULL DEFAULT 100,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE deadlines (
+        id TEXT PRIMARY KEY,
+        service TEXT NOT NULL,
+        kind TEXT NOT NULL,                   -- invoice | subscription | contract | renewal | warranty | tax | insurance | other
+        amount REAL,
+        currency TEXT NOT NULL DEFAULT 'EUR',
+        periodicity TEXT NOT NULL DEFAULT 'one_off', -- weekly | monthly | quarterly | yearly | one_off
+        next_date INTEGER,
+        cancel_by INTEGER,
+        status TEXT NOT NULL DEFAULT 'active',       -- active | cancelled | paid
+        notes TEXT NOT NULL DEFAULT '',
+        source_ref TEXT,
+        confidence REAL,
+        price_history TEXT NOT NULL DEFAULT '[]',
+        event_id TEXT,
+        task_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX deadlines_next ON deadlines(status, next_date);
+      CREATE TABLE deadline_alerts (
+        deadline_id TEXT NOT NULL REFERENCES deadlines(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,                   -- due | cancel
+        days INTEGER NOT NULL,
+        target_date INTEGER NOT NULL,         -- si la date change, l'alerte peut se redéclencher
+        fired_at INTEGER NOT NULL,
+        PRIMARY KEY (deadline_id, kind, days, target_date)
+      );
+      CREATE TABLE style_profiles (
+        scope TEXT PRIMARY KEY,               -- global | group:<nom> | contact:<adresse>
+        profile TEXT NOT NULL,
+        source TEXT NOT NULL,                 -- learned | manual
+        sample_count INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE contact_groups (addr TEXT PRIMARY KEY, group_name TEXT NOT NULL);
+      CREATE TABLE drafts (
+        id TEXT PRIMARY KEY,
+        mail_id TEXT NOT NULL REFERENCES mails(id) ON DELETE CASCADE,
+        body TEXT NOT NULL,
+        scope TEXT,
+        instruction TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE plugins (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        version TEXT NOT NULL,
+        manifest TEXT NOT NULL,
+        dir TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        granted TEXT NOT NULL DEFAULT '[]',   -- permissions accordées par l'utilisateur
+        installed_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE plugin_storage (
+        plugin_id TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (plugin_id, key)
+      );
+    `,
+  },
 ];

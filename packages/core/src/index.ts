@@ -9,3 +9,4 @@ export * from "./documents/pipeline";
 export * from "./mail";
 export * from "./google";
 export * from "./calendar";
+export * from "./memory";

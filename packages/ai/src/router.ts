@@ -50,9 +50,9 @@ export class AIRouter {
     return { messages: out, counts };
   }
 
-  async *chat(task: TaskKind, req: Omit<ChatRequest, "model">): AsyncIterable<ChatChunk> {
+  async *chat(task: TaskKind, req: Omit<ChatRequest, "model">, override?: TaskRoute): AsyncIterable<ChatChunk> {
     this.opts.tracker?.assertWithinBudget();
-    const { primary, fallback } = this.routeFor(task);
+    const { primary, fallback } = override ?? this.routeFor(task);
     const { messages, counts } = this.prepare(req.messages);
 
     const attempts = fallback ? [primary, fallback] : [primary];
