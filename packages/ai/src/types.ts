@@ -1,8 +1,16 @@
 export type Role = "system" | "user" | "assistant" | "tool";
 
+export interface ImagePart {
+  mime: string;
+  /** Base64 sans préfixe data: */
+  data: string;
+}
+
 export interface ChatMessage {
   role: Role;
   content: string;
+  /** Images jointes (vision / OCR), pour role "user". */
+  images?: ImagePart[];
   /** Pour role "tool" : l'appel auquel ce message répond. */
   toolCallId?: string;
   /** Pour role "assistant" : appels d'outils émis à ce tour. */

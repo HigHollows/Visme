@@ -2,3 +2,7 @@ export * from "./rpc";
 export * from "./app";
 export * from "./ai";
 export * from "./chat";
+export * from "./search";
+export * from "./documents/extract";
+export * from "./documents/chunk";
+export * from "./documents/pipeline";

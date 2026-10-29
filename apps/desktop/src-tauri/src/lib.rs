@@ -29,6 +29,7 @@ async fn secret_set(state: State<'_, SidecarState>, provider: String, key: Strin
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(SidecarState(Mutex::new(None)))
         .setup(|app| {
             // En dev, la racine du dépôt est trois niveaux au-dessus de src-tauri.

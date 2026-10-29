@@ -26,6 +26,14 @@ function toAnthropicMessages(messages: ChatMessage[]) {
       const blocks: unknown[] = m.content ? [{ type: "text", text: m.content }] : [];
       for (const c of m.toolCalls) blocks.push({ type: "tool_use", id: c.id, name: c.name, input: c.args });
       out.push({ role: "assistant", content: blocks });
+    } else if (m.images?.length) {
+      out.push({
+        role: m.role as "user" | "assistant",
+        content: [
+          ...m.images.map((i) => ({ type: "image", source: { type: "base64", media_type: i.mime, data: i.data } })),
+          { type: "text", text: m.content },
+        ],
+      });
     } else {
       out.push({ role: m.role as "user" | "assistant", content: m.content });
     }

@@ -15,7 +15,7 @@ interface ChatEvent {
 
 const btn = "rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800";
 
-export function Chat() {
+export function Chat({ openId }: { openId?: string | null }) {
   const [convs, setConvs] = useState<Conv[]>([]);
   const [current, setCurrent] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -56,6 +56,10 @@ export function Chat() {
     });
     return () => void un.then((f) => f());
   }, [refreshList]);
+
+  useEffect(() => {
+    if (openId !== undefined && !streamRef.current) void open(openId);
+  }, [openId, open]);
 
   useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [messages]);
 

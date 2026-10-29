@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { audit, openDatabase, type Db } from "@assistant/db";
 import { migrateSettings, exportSettings, type Settings } from "@assistant/schemas";
 import { createProvider } from "@assistant/ai";
-import { usageTotals } from "./ai";
+import { buildProviders, buildRouter, usageTotals } from "./ai";
+import { DocumentPipeline } from "./documents/pipeline";
+import { search } from "./search";
 import { registerChat, type Notify } from "./chat";
 import { RpcError, RpcServer } from "./rpc";
 
@@ -73,7 +75,51 @@ export function createApp(opts: { fetch?: typeof fetch; notify?: Notify } = {}):
     return createProvider(p.provider, cfg, key, opts.fetch).testConnection();
   });
 
-  registerChat({ rpc, db: need, settings: loadSettings, keys, fetch: opts.fetch, notify: opts.notify ?? (() => {}) });
+  const notify = opts.notify ?? (() => {});
+  const getRouter = () => {
+    const settings = loadSettings();
+    const providers = buildProviders(settings, keys, opts.fetch);
+    return Object.keys(providers).length ? buildRouter(need(), settings, providers) : null;
+  };
+  let pipeline: DocumentPipeline | null = null;
+  const docs = () => (pipeline ??= new DocumentPipeline({ db: need(), settings: loadSettings, router: getRouter, notify }));
+
+  const parseDoc = (r: any) => ({
+    ...r,
+    warnings: JSON.parse(r.warnings),
+    tags: JSON.parse(r.tags),
+    entities: JSON.parse(r.entities),
+    dates: JSON.parse(r.dates),
+  });
+  const DOC_COLS = "id, name, path, ext, size, status, error, warnings, summary, tags, entities, dates, created_at AS createdAt, indexed_at AS indexedAt";
+
+  rpc.register("documents.add", async (p: { paths: string[] }) => {
+    const results: { path: string; id?: string; duplicate?: boolean; error?: string }[] = [];
+    for (const path of (p.paths ?? []).slice(0, 200)) {
+      try {
+        results.push({ path, ...(await docs().add(path)) });
+      } catch (e) {
+        results.push({ path, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    return results;
+  });
+  rpc.register("documents.list", () =>
+    need().prepare(`SELECT ${DOC_COLS} FROM documents ORDER BY created_at DESC`).all().map(parseDoc),
+  );
+  rpc.register("documents.get", (p: { id: string }) => {
+    const r = need().prepare(`SELECT ${DOC_COLS} FROM documents WHERE id = ?`).get(p.id);
+    if (!r) throw new RpcError(-32602, "Document introuvable");
+    return parseDoc(r);
+  });
+  rpc.register("documents.delete", (p: { id: string }) => (docs().remove(p.id), { ok: true }));
+  rpc.register("documents.reindex", (p: { id: string }) => (docs().reindex(p.id), { ok: true }));
+
+  rpc.register("search.query", async (p: { q: string; limit?: number }) =>
+    search(need(), getRouter(), String(p.q ?? "").slice(0, 500), Math.min(p.limit ?? 20, 50)),
+  );
+
+  registerChat({ rpc, db: need, settings: loadSettings, keys, fetch: opts.fetch, notify });
 
   rpc.register("audit.list", (p: { limit?: number }) =>
     need()

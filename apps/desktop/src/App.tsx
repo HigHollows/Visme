@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Chat } from "./pages/Chat";
+import { Documents } from "./pages/Documents";
+import { SearchPalette } from "./SearchPalette";
 import { SettingsAI } from "./pages/SettingsAI";
 
 const SECTIONS = [
@@ -10,9 +12,19 @@ const SECTIONS = [
 
 export function App() {
   const [active, setActive] = useState<(typeof SECTIONS)[number]>("Accueil");
+  const [palette, setPalette] = useState(false);
+  const [target, setTarget] = useState<{ chat?: string | null; doc?: string | null }>({});
   const [version, setVersion] = useState<string>("…");
 
   const [autonomy, setAutonomy] = useState<string>("…");
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((p) => !p); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     invoke<string>("app_version").then(setVersion).catch(() => setVersion("web"));
@@ -29,7 +41,7 @@ export function App() {
           {SECTIONS.map((s) => (
             <li key={s}>
               <button
-                onClick={() => setActive(s)}
+                onClick={() => { setTarget({}); setActive(s); }}
                 aria-current={active === s ? "page" : undefined}
                 className={`w-full rounded-md px-3 py-1.5 text-left text-sm ${active === s ? "bg-neutral-100 font-medium dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-900"}`}
               >
@@ -47,7 +59,9 @@ export function App() {
             <SettingsAI />
           </div>
         ) : active === "Chat" ? (
-          <div className="mt-4"><Chat /></div>
+          <div className="mt-4"><Chat openId={target.chat} /></div>
+        ) : active === "Documents" ? (
+          <div className="mt-4"><Documents selectedId={target.doc} /></div>
         ) : (
           <>
         <p className="mt-2 text-sm text-neutral-500">Version {version} — section en construction.</p>
@@ -55,6 +69,19 @@ export function App() {
           </>
         )}
       </main>
+      {palette && (
+        <SearchPalette
+          actions={[
+            ...SECTIONS.map((n) => ({ id: `go:${n}`, label: `Aller à ${n}`, run: () => setActive(n) })),
+            { id: "newchat", label: "Nouvelle conversation", run: () => { setTarget({ chat: null }); setActive("Chat"); } },
+          ]}
+          onOpen={(type, id) => {
+            if (type === "document") { setTarget({ doc: id }); setActive("Documents"); }
+            else { setTarget({ chat: id }); setActive("Chat"); }
+          }}
+          onClose={() => setPalette(false)}
+        />
+      )}
     </div>
   );
 }

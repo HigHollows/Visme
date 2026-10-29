@@ -29,6 +29,14 @@ function toOpenAIMessages(messages: ChatMessage[]) {
           function: { name: c.name, arguments: JSON.stringify(c.args) },
         })),
       };
+    if (m.images?.length)
+      return {
+        role: m.role,
+        content: [
+          ...m.images.map((i) => ({ type: "image_url", image_url: { url: `data:${i.mime};base64,${i.data}` } })),
+          { type: "text", text: m.content },
+        ],
+      };
     return { role: m.role, content: m.content };
   });
 }

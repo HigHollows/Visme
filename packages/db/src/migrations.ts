@@ -76,4 +76,27 @@ export const migrations: Migration[] = [
       CREATE INDEX messages_conv ON messages(conversation_id, id);
     `,
   },
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE documents (
+        id TEXT PRIMARY KEY,
+        node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL,
+        ext TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        hash TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL,         -- indexing | ready | error
+        error TEXT,
+        warnings TEXT NOT NULL DEFAULT '[]',
+        summary TEXT,
+        tags TEXT NOT NULL DEFAULT '[]',
+        entities TEXT NOT NULL DEFAULT '[]',
+        dates TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        indexed_at INTEGER
+      );
+    `,
+  },
 ];

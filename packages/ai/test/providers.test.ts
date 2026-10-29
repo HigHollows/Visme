@@ -116,3 +116,22 @@ describe("OpenAIProvider", () => {
     expect(p.id).toBe("mistral");
   });
 });
+
+describe("vision", () => {
+  const img = { mime: "image/png", data: "AAAA" };
+  it("Anthropic : image en bloc base64 avant le texte", async () => {
+    let body: any;
+    const p = new AnthropicProvider({ apiKey: "k", fetch: (async (_u: string, i: RequestInit) => { body = JSON.parse(i.body as string); return sse([]); }) as never });
+    await collect(p.chat({ model: "m", messages: [{ role: "user", content: "lis", images: [img] }] }));
+    expect(body.messages[0].content).toEqual([
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
+      { type: "text", text: "lis" },
+    ]);
+  });
+  it("OpenAI : image en data URL", async () => {
+    let body: any;
+    const p = new OpenAIProvider({ apiKey: "k", fetch: (async (_u: string, i: RequestInit) => { body = JSON.parse(i.body as string); return sse([], true); }) as never });
+    await collect(p.chat({ model: "m", messages: [{ role: "user", content: "lis", images: [img] }] }));
+    expect(body.messages[0].content[0]).toEqual({ type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } });
+  });
+});
