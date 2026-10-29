@@ -7,6 +7,47 @@ interface Full extends Row { summary: string | null; toAddrs: string; body: stri
 
 const fmtDate = (t: number) => new Date(t).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
+interface Draft { id: string; body: string; scope: string | null }
+const btn = "rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800";
+
+function DraftPanel({ mailId }: { mailId: string }) {
+  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [instruction, setInstruction] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const load = useCallback(() => { rpc<Draft[]>("drafts.list", { mailId }).then(setDrafts).catch(() => setDrafts([])); }, [mailId]);
+  useEffect(() => { setMsg(""); load(); }, [load]);
+
+  const run = async (params: Record<string, unknown>) => {
+    setBusy(true); setMsg("");
+    try { await rpc("drafts.reply", { mailId, ...params }); load(); } catch (e) { setMsg(String(e)); }
+    setBusy(false);
+  };
+  const latest = drafts[0];
+  return (
+    <section className="mt-6 border-t border-neutral-200 pt-3 dark:border-neutral-800" aria-label="Brouillon de réponse">
+      <h3 className="mb-2 text-sm font-medium">Brouillon de réponse <span className="font-normal text-neutral-500">(jamais envoyé automatiquement)</span></h3>
+      <div className="flex gap-2">
+        <input aria-label="Consigne" placeholder="Consigne facultative (ex. « dis que je confirme lundi »)" className="flex-1 rounded-md border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700" value={instruction} onChange={(e) => setInstruction(e.target.value)} />
+        <button className={btn} disabled={busy} onClick={() => run({ instruction: instruction || undefined })}>{busy ? "Rédaction…" : latest ? "Nouveau brouillon" : "Rédiger"}</button>
+      </div>
+      {msg && <p role="alert" className="mt-1 text-sm text-red-600">{msg}</p>}
+      {latest && (
+        <div className="mt-2 space-y-2">
+          {latest.scope && <p className="text-xs text-neutral-500">Style appliqué : {latest.scope}</p>}
+          <textarea aria-label="Brouillon" rows={8} className="w-full rounded-md border border-neutral-300 bg-transparent p-2 text-sm dark:border-neutral-700" key={latest.id} defaultValue={latest.body}
+            onBlur={(e) => { if (e.target.value !== latest.body) void rpc("drafts.update", { id: latest.id, body: e.target.value }).then(load); }} />
+          <div className="flex flex-wrap gap-2">
+            {([["shorter", "Plus court"], ["formal", "Plus formel"], ["direct", "Plus direct"]] as const).map(([k, l]) => <button key={k} className={btn} disabled={busy} onClick={() => run({ rewrite: k, draftId: latest.id })}>{l}</button>)}
+            <button className={btn} onClick={() => navigator.clipboard.writeText(latest.body).then(() => setMsg("")).catch(() => setMsg("Copie impossible"))}>Copier</button>
+            <button className={btn} onClick={() => rpc("drafts.delete", { id: latest.id }).then(load)}>Supprimer</button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function Mails({ selectedId }: { selectedId?: string | null }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [q, setQ] = useState("");
@@ -64,6 +105,7 @@ export function Mails({ selectedId }: { selectedId?: string | null }) {
             )}
             {/* Texte brut uniquement : pas de HTML distant, pas de pixels espions. */}
             <div className="whitespace-pre-wrap break-words text-sm">{mail.body}</div>
+            <DraftPanel mailId={mail.id} />
             {mail.attachments.length > 0 && (
               <ul className="mt-4 border-t border-neutral-200 pt-2 text-sm dark:border-neutral-800">
                 {mail.attachments.map((a, i) => <li key={i}>📎 {a.name} <span className="text-xs text-neutral-500">({Math.max(1, Math.round(a.size / 1000))} Ko)</span></li>)}

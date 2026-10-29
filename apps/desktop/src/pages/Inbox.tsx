@@ -9,6 +9,10 @@ const dt = (t: number) => { const d = new Date(t); return `${d.getFullYear()}-${
 const fmt = (t: number, allDay?: boolean) => new Date(t).toLocaleString("fr-FR", allDay ? { dateStyle: "full" } : { dateStyle: "medium", timeStyle: "short" });
 
 function describe(p: Proposal) {
+  if (p.kind === "deadline") {
+    const d = p.payload as { service?: string; amount?: number | null; currency?: string; nextDate?: number | null; cancelBy?: number | null };
+    return `💶 ${p.title}${d.nextDate ? ` — échéance le ${fmt(d.nextDate, true)}` : ""}${d.cancelBy ? ` · résilier avant le ${fmt(d.cancelBy, true)}` : ""}`;
+  }
   if (p.kind === "event") return `📅 ${p.payload.title ?? p.title} — ${p.payload.start ? fmt(p.payload.start, p.payload.allDay) : ""}${p.payload.location ? ` · ${p.payload.location}` : ""}`;
   return `☑ ${p.title}${p.payload.due ? ` — pour le ${fmt(p.payload.due, true)}` : ""}`;
 }
@@ -18,8 +22,14 @@ function EditDialog({ p, onClose, onSave }: { p: Proposal; onClose: () => void; 
   const [start, setStart] = useState(p.payload.start ? dt(p.payload.start) : "");
   const [end, setEnd] = useState(p.payload.end ? dt(p.payload.end) : "");
   const [due, setDue] = useState(p.payload.due ? dt(p.payload.due).slice(0, 10) : "");
+  const dl = p.payload as { nextDate?: number | null; cancelBy?: number | null };
+  const [nextDate, setNextDate] = useState(dl.nextDate ? dt(dl.nextDate).slice(0, 10) : "");
+  const [cancelBy, setCancelBy] = useState(dl.cancelBy ? dt(dl.cancelBy).slice(0, 10) : "");
+  const day = (s: string) => (s ? new Date(`${s}T00:00`).getTime() : null);
   const save = () => {
-    if (p.kind === "event") {
+    if (p.kind === "deadline") {
+      onSave({ nextDate: day(nextDate), cancelBy: day(cancelBy) });
+    } else if (p.kind === "event") {
       const s = new Date(start).getTime();
       const e = end ? new Date(end).getTime() : s + 3600_000;
       onSave({ title, start: s, end: e });
@@ -30,7 +40,12 @@ function EditDialog({ p, onClose, onSave }: { p: Proposal; onClose: () => void; 
       <div role="dialog" aria-modal="true" aria-label="Modifier la suggestion" onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === "Escape" && onClose()}
         className="w-[420px] max-w-[92vw] space-y-3 rounded-xl border border-neutral-200 bg-white p-5 shadow-2xl dark:border-neutral-700 dark:bg-neutral-900">
         <input autoFocus aria-label="Titre" className={`${input} w-full`} value={title} onChange={(e) => setTitle(e.target.value)} />
-        {p.kind === "event" ? (
+        {p.kind === "deadline" ? (
+          <div className="flex flex-wrap gap-3 text-sm">
+            <label>Échéance<br /><input type="date" className={input} value={nextDate} onChange={(e) => setNextDate(e.target.value)} /></label>
+            <label>Résilier avant<br /><input type="date" className={input} value={cancelBy} onChange={(e) => setCancelBy(e.target.value)} /></label>
+          </div>
+        ) : p.kind === "event" ? (
           <div className="flex flex-wrap items-center gap-2">
             <input type="datetime-local" aria-label="Début" className={input} value={start} onChange={(e) => setStart(e.target.value)} />→
             <input type="datetime-local" aria-label="Fin" className={input} value={end} onChange={(e) => setEnd(e.target.value)} />

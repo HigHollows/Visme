@@ -49,13 +49,16 @@ async fn secret_set(state: State<'_, SidecarState>, provider: String, key: Strin
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(SidecarState(Mutex::new(None)))
         .setup(|app| {
             // En dev, la racine du dépôt est trois niveaux au-dessus de src-tauri.
             let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
             let data_dir = app.path().app_data_dir()?;
-            let sc = Sidecar::spawn(root.canonicalize()?, app.handle().clone())?;
-            tauri::async_runtime::block_on(sc.init(&data_dir.to_string_lossy(), "default"))?;
+            let root = root.canonicalize()?;
+            let bundled = root.join("plugins");
+            let sc = Sidecar::spawn(root, app.handle().clone())?;
+            tauri::async_runtime::block_on(sc.init(&data_dir.to_string_lossy(), "default", &bundled.to_string_lossy()))?;
             *app.state::<SidecarState>().0.lock().unwrap() = Some(sc);
 
             // Icône de la zone de notification : l'agent continue de tourner fenêtre fermée.

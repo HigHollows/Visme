@@ -18,3 +18,4 @@ keyring = { version = "3", features = ["apple-native", "windows-native"] }
 getrandom = "0.2"
 tokio = { version = "1", features = ["sync"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"

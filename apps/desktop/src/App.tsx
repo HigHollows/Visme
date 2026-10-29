@@ -2,8 +2,14 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { rpc } from "./rpc";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { Chat } from "./pages/Chat";
+import { Deadlines } from "./pages/Deadlines";
+import { Graph } from "./pages/Graph";
 import { Home } from "./pages/Home";
+import { Plugins } from "./pages/Plugins";
+import { SettingsPresets } from "./pages/SettingsPresets";
+import { SettingsStyle } from "./pages/SettingsStyle";
 import { Inbox } from "./pages/Inbox";
 import { SettingsAgent } from "./pages/SettingsAgent";
 import { Tasks } from "./pages/Tasks";
@@ -21,7 +27,7 @@ const SECTIONS = [
 
 export function App() {
   const [active, setActive] = useState<(typeof SECTIONS)[number]>("Accueil");
-  const [settingsTab, setSettingsTab] = useState<"IA" | "Comptes" | "Agent">("Comptes");
+  const [settingsTab, setSettingsTab] = useState<"IA" | "Comptes" | "Agent" | "Style" | "Préréglages">("Comptes");
   const [pending, setPending] = useState(0);
   const [palette, setPalette] = useState(false);
   const [target, setTarget] = useState<{ chat?: string | null; doc?: string | null; mail?: string | null; cal?: number | null }>({});
@@ -34,6 +40,22 @@ export function App() {
     refresh();
     const un = listen<{ method: string }>("sidecar-event", ({ payload }) => {
       if (payload.method === "proposals.event" || payload.method === "agent.event") refresh();
+    });
+    return () => void un.then((f) => f());
+  }, []);
+
+  useEffect(() => {
+    const un = listen<{ method: string; params: { service: string; kind: "due" | "cancel"; days: number } }>("sidecar-event", async ({ payload }) => {
+      if (payload.method !== "deadline.alert") return;
+      const a = payload.params;
+      try {
+        let ok = await isPermissionGranted();
+        if (!ok) ok = (await requestPermission()) === "granted";
+        if (ok) sendNotification({
+          title: a.kind === "cancel" ? `Résiliation : ${a.service}` : `Échéance : ${a.service}`,
+          body: a.days === 0 ? "C'est aujourd'hui." : a.days === 1 ? "C'est demain." : `Dans ${a.days} jours au plus tard.`,
+        });
+      } catch { /* les notifications système sont facultatives */ }
     });
     return () => void un.then((f) => f());
   }, []);
@@ -79,21 +101,35 @@ export function App() {
         {active === "Settings" ? (
           <div className="mt-4">
             <div role="tablist" aria-label="Sections des réglages" className="mb-4 flex gap-2">
-              {(["Comptes", "IA", "Agent"] as const).map((t) => (
+              {(["Comptes", "IA", "Agent", "Style", "Préréglages"] as const).map((t) => (
                 <button key={t} role="tab" aria-selected={settingsTab === t} onClick={() => setSettingsTab(t)}
                   className={`rounded-md px-3 py-1 text-sm ${settingsTab === t ? "bg-neutral-100 font-medium dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-900"}`}>{t}</button>
               ))}
             </div>
-            {settingsTab === "IA" ? <SettingsAI /> : settingsTab === "Agent" ? <SettingsAgent /> : <SettingsAccounts />}
+            {settingsTab === "IA" ? <SettingsAI /> : settingsTab === "Agent" ? <SettingsAgent /> : settingsTab === "Style" ? <SettingsStyle /> : settingsTab === "Préréglages" ? <SettingsPresets /> : <SettingsAccounts />}
           </div>
         ) : active === "Chat" ? (
-          <div className="mt-4"><Chat openId={target.chat} /></div>
+          <div className="mt-4"><Chat openId={target.chat} onOpenSource={(type, id) => {
+            if (type === "document") { setTarget({ doc: id }); setActive("Documents"); }
+            else if (type === "mail") { setTarget({ mail: id }); setActive("Mails"); }
+            else if (type === "event") { setTarget({}); setActive("Calendrier"); }
+          }} /></div>
         ) : active === "Accueil" ? (
           <div className="mt-4"><Home go={(sec) => { setTarget({}); setActive(sec as typeof active); }} onOpenMail={(id) => { setTarget({ mail: id }); setActive("Mails"); }} /></div>
         ) : active === "À valider" ? (
           <div className="mt-4"><Inbox onOpenMail={(id) => { setTarget({ mail: id }); setActive("Mails"); }} /></div>
         ) : active === "Tâches" ? (
           <div className="mt-4"><Tasks onOpenMail={(id) => { setTarget({ mail: id }); setActive("Mails"); }} /></div>
+        ) : active === "Graphe" ? (
+          <div className="mt-4"><Graph onOpen={(type, id) => {
+            if (type === "document") { setTarget({ doc: id }); setActive("Documents"); }
+            else if (type === "mail") { setTarget({ mail: id }); setActive("Mails"); }
+            else { setTarget({}); setActive("Calendrier"); }
+          }} /></div>
+        ) : active === "Échéances" ? (
+          <div className="mt-4"><Deadlines onOpenMail={(id) => { setTarget({ mail: id }); setActive("Mails"); }} /></div>
+        ) : active === "Plugins" ? (
+          <div className="mt-4"><Plugins /></div>
         ) : active === "Calendrier" ? (
           <div className="mt-4"><CalendarPage openAt={target.cal} /></div>
         ) : active === "Mails" ? (

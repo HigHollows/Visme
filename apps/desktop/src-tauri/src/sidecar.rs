@@ -112,9 +112,9 @@ impl Sidecar {
         rx.await.map_err(|_| "réponse perdue".to_string())?
     }
 
-    pub async fn init(&self, data_dir: &str, profile: &str) -> Result<(), String> {
+    pub async fn init(&self, data_dir: &str, profile: &str, bundled_plugins: &str) -> Result<(), String> {
         let key = db_key(profile)?;
-        self.call("init", serde_json::json!({"dataDir": data_dir, "key": key, "profile": profile})).await?;
+        self.call("init", serde_json::json!({"dataDir": data_dir, "key": key, "profile": profile, "bundledPluginsDir": bundled_plugins})).await?;
         self.push_keys().await
     }
 

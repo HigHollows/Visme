@@ -36,10 +36,35 @@ export interface AgentSettings {
   enabled: boolean; autonomy: Autonomy; syncIntervalMinutes: number; eventConfidenceThreshold: number; draftOnly: boolean;
 }
 export interface Proposal {
-  id: string; kind: "event" | "task"; status: string; title: string; reason: string; confidence: number;
-  payload: { title?: string; start?: number; end?: number; allDay?: boolean; location?: string; due?: number | null };
+  id: string; kind: "event" | "task" | "deadline"; status: string; title: string; reason: string; confidence: number;
+  payload: { title?: string; start?: number; end?: number; allDay?: boolean; location?: string; due?: number | null; [k: string]: unknown };
   sourceRef: { type: string; id: string } | null; createdAt: number; decidedAt: number | null;
 }
 export const CATEGORY_LABEL: Record<string, string> = {
   important: "Important", to_reply: "À répondre", invoice: "Facture", newsletter: "Newsletter", spam: "Spam", pro: "Pro", perso: "Perso",
 };
+
+export interface Preset {
+  id: string; name: string; systemPrompt: string; tools: string[]; tone: string; language: string;
+  provider: string | null; model: string | null; builtin: boolean;
+}
+export interface SourceRef { n: number; type: "document" | "mail" | "event" | "conversation"; id: string; title: string }
+export interface StyleProfile {
+  greetings: string[]; closings: string[]; formality: "tu" | "vous" | "mixte"; length: "court" | "moyen" | "long";
+  tone: string; signature: string; notes: string;
+}
+export const KIND_LABEL: Record<string, string> = {
+  invoice: "Facture", subscription: "Abonnement", contract: "Contrat", renewal: "Renouvellement",
+  warranty: "Garantie", tax: "Impôt", insurance: "Assurance", other: "Autre",
+};
+export const PERIOD_LABEL: Record<string, string> = { weekly: "Hebdo", monthly: "Mensuel", quarterly: "Trimestriel", yearly: "Annuel", one_off: "Ponctuel" };
+export const PERMISSION_LABELS: Record<string, string> = {
+  ai: "Utiliser l'IA configurée (consomme du budget)",
+  "documents:read": "Lire vos documents (résumés et texte)",
+  "mail:read": "Lire vos mails",
+  "calendar:read": "Lire votre calendrier",
+  "memory:read": "Lire le graphe de mémoire",
+  "memory:write": "Ajouter des liens au graphe de mémoire",
+  propose: "Proposer des tâches/événements (toujours validés par vous)",
+};
+export const describePermission = (p: string) => (p.startsWith("net:") ? `Accéder au site ${p.slice(4)} (HTTPS uniquement)` : PERMISSION_LABELS[p] ?? p);
