@@ -5,6 +5,8 @@ import { migrateSettings, exportSettings, type Settings } from "@assistant/schem
 import { createProvider } from "@assistant/ai";
 import { buildProviders, buildRouter, usageTotals } from "./ai";
 import { DocumentPipeline } from "./documents/pipeline";
+import { CalendarService } from "./calendar";
+import type { Feature } from "./google";
 import { MailService } from "./mail";
 import { search } from "./search";
 import { registerChat, type Notify } from "./chat";
@@ -140,9 +142,15 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   });
   rpc.register("google.config.set", (p: { clientId: string; clientSecret?: string }) => (mail().setGoogleConfig(p), { ok: true }));
   rpc.register("accounts.list", () => mail().listAccounts());
-  rpc.register("accounts.connectGoogle", async () => {
-    const acc = await mail().connectGoogle();
+  let calSvc: CalendarService | null = null;
+  const cal = () =>
+    (calSvc ??= new CalendarService({ db: need(), auth: mail().auth, fetch: opts.fetch, notify, sleep: opts.sleep }));
+
+  rpc.register("accounts.connectGoogle", async (p: { mail?: boolean; calendar?: boolean; loginHint?: string }) => {
+    const features: Feature[] = [...(p.mail === false ? [] : ["mail" as const]), ...(p.calendar ? ["calendar" as const] : [])];
+    const acc = await mail().connectGoogle(features, p.loginHint);
     mail().startSync(acc.id);
+    cal().startSync(acc.id);
     return acc;
   });
   rpc.register("accounts.remove", (p: { id: string }) => (mail().removeAccount(p.id), { ok: true }));
@@ -150,6 +158,16 @@ export function createApp(opts: AppOptions = {}): RpcServer {
     const ids = p.accountId ? [p.accountId] : (mail().listAccounts() as { id: string }[]).map((a) => a.id);
     return { started: ids.filter((id) => mail().startSync(id)).length };
   });
+  rpc.register("calendar.sync", (p: { accountId?: string }) => {
+    const ids = p.accountId ? [p.accountId] : (mail().listAccounts() as { id: string }[]).map((a) => a.id);
+    return { started: ids.filter((id) => cal().startSync(id)).length };
+  });
+  rpc.register("calendar.list", (p: { from: number; to: number }) => cal().list(Number(p.from), Number(p.to)));
+  rpc.register("calendar.get", (p: { id: string }) => cal().get(p.id));
+  rpc.register("calendar.create", (p: any) => cal().create(p));
+  rpc.register("calendar.update", (p: any) => cal().update(p.id, p));
+  rpc.register("calendar.delete", (p: { id: string }) => (cal().delete(p.id), { ok: true }));
+
   rpc.register("mail.list", (p: any) => mail().list(p ?? {}));
   rpc.register("mail.get", (p: { id: string }) => mail().get(p.id));
 

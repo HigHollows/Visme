@@ -19,6 +19,8 @@ export interface Tokens {
   refreshToken?: string;
   /** Epoch ms */
   expiresAt: number;
+  /** Portées accordées (séparées par des espaces), telles que renvoyées par le fournisseur. */
+  scope?: string;
 }
 
 const b64url = (b: Buffer) => b.toString("base64url");
@@ -51,7 +53,7 @@ async function tokenRequest(
   f: FetchFn,
   url: string,
   params: Record<string, string>,
-): Promise<{ access_token: string; refresh_token?: string; expires_in: number; id_token?: string }> {
+): Promise<{ access_token: string; refresh_token?: string; expires_in: number; scope?: string }> {
   const res = await f(url, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -139,7 +141,7 @@ export async function authorize(o: FlowOptions): Promise<Tokens> {
       code_verifier: verifier,
       ...(o.clientSecret && { client_secret: o.clientSecret }),
     });
-    return { accessToken: t.access_token, refreshToken: t.refresh_token, expiresAt: now + t.expires_in * 1000 };
+    return { accessToken: t.access_token, refreshToken: t.refresh_token, expiresAt: now + t.expires_in * 1000, scope: t.scope };
   } finally {
     clearTimeout(timer);
     server.close();
@@ -161,5 +163,5 @@ export async function refreshTokens(
     ...(clientSecret && { client_secret: clientSecret }),
   });
   // Google ne renvoie pas toujours un nouveau refresh token : on conserve l'ancien.
-  return { accessToken: t.access_token, refreshToken: t.refresh_token ?? refreshToken, expiresAt: now + t.expires_in * 1000 };
+  return { accessToken: t.access_token, refreshToken: t.refresh_token ?? refreshToken, expiresAt: now + t.expires_in * 1000, scope: t.scope };
 }

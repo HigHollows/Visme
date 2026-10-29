@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { rpc } from "./rpc";
 
 export interface PaletteAction { id: string; label: string; run: () => void }
-interface Hit { type: "document" | "conversation" | "mail"; id: string; title: string; snippet: string }
+interface Hit { type: "document" | "conversation" | "mail" | "event"; id: string; title: string; snippet: string }
 type Row = { key: string; group: string; title: string; sub?: string; run: () => void };
 
-const GROUP: Record<Hit["type"], string> = { document: "Documents", conversation: "Conversations", mail: "Mails" };
+const GROUP: Record<Hit["type"], string> = { document: "Documents", conversation: "Conversations", mail: "Mails", event: "Événements" };
 
 /** Recherche globale (Cmd/Ctrl+K) : actions rapides + recherche hybride dans les données. */
 export function SearchPalette({ actions, onOpen, onClose }: {

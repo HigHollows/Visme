@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Chat } from "./pages/Chat";
+import { CalendarPage } from "./pages/Calendar";
 import { Documents } from "./pages/Documents";
 import { Mails } from "./pages/Mails";
 import { SettingsAccounts } from "./pages/SettingsAccounts";
@@ -16,7 +17,7 @@ export function App() {
   const [active, setActive] = useState<(typeof SECTIONS)[number]>("Accueil");
   const [settingsTab, setSettingsTab] = useState<"IA" | "Comptes">("Comptes");
   const [palette, setPalette] = useState(false);
-  const [target, setTarget] = useState<{ chat?: string | null; doc?: string | null; mail?: string | null }>({});
+  const [target, setTarget] = useState<{ chat?: string | null; doc?: string | null; mail?: string | null; cal?: number | null }>({});
   const [version, setVersion] = useState<string>("…");
 
   const [autonomy, setAutonomy] = useState<string>("…");
@@ -68,6 +69,8 @@ export function App() {
           </div>
         ) : active === "Chat" ? (
           <div className="mt-4"><Chat openId={target.chat} /></div>
+        ) : active === "Calendrier" ? (
+          <div className="mt-4"><CalendarPage openAt={target.cal} /></div>
         ) : active === "Mails" ? (
           <div className="mt-4"><Mails selectedId={target.mail} /></div>
         ) : active === "Documents" ? (
@@ -87,6 +90,7 @@ export function App() {
           ]}
           onOpen={(type, id) => {
             if (type === "document") { setTarget({ doc: id }); setActive("Documents"); }
+            else if (type === "event") { setTarget({ cal: Number(id) }); setActive("Calendrier"); }
             else if (type === "mail") { setTarget({ mail: id }); setActive("Mails"); }
             else { setTarget({ chat: id }); setActive("Chat"); }
           }}

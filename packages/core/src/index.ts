@@ -7,3 +7,5 @@ export * from "./documents/extract";
 export * from "./documents/chunk";
 export * from "./documents/pipeline";
 export * from "./mail";
+export * from "./google";
+export * from "./calendar";

@@ -5,6 +5,8 @@ import { rpc } from "../rpc";
 interface Account {
   id: string; provider: string; email: string; status: "ok" | "reauth";
   syncStatus: "idle" | "syncing" | "error"; syncError: string | null; lastSyncAt: number | null; mailCount: number;
+  features: { mail: boolean; calendar: boolean };
+  calendarStatus: "idle" | "syncing" | "error" | null; calendarError: string | null; calendarLastSyncAt: number | null; eventCount: number;
 }
 
 const input = "rounded-md border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700";
@@ -16,6 +18,8 @@ export function SettingsAccounts() {
   const [secret, setSecret] = useState("");
   const [hasSecret, setHasSecret] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [wantMail, setWantMail] = useState(true);
+  const [wantCal, setWantCal] = useState(true);
   const [msg, setMsg] = useState("");
 
   const refresh = useCallback(() => rpc<Account[]>("accounts.list").then(setAccounts).catch((e) => setMsg(String(e))), []);
@@ -23,7 +27,7 @@ export function SettingsAccounts() {
   useEffect(() => {
     rpc<{ clientId: string; hasSecret: boolean }>("google.config.get").then((c) => { setClientId(c.clientId); setHasSecret(c.hasSecret); });
     refresh();
-    const un = listen<{ method: string }>("sidecar-event", ({ payload }) => { if (payload.method === "mail.event") refresh(); });
+    const un = listen<{ method: string }>("sidecar-event", ({ payload }) => { if (payload.method === "mail.event" || payload.method === "calendar.event") refresh(); });
     return () => void un.then((f) => f());
   }, [refresh]);
 
@@ -35,11 +39,11 @@ export function SettingsAccounts() {
     } catch (e) { setMsg(String(e)); }
   };
 
-  const connect = async () => {
+  const connect = async (opts: { mail: boolean; calendar: boolean; loginHint?: string }) => {
     setConnecting(true);
-    setMsg("Une page Google s'est ouverte dans votre navigateur : autorisez l'accès en lecture à vos mails…");
+    setMsg("Une page Google s'est ouverte dans votre navigateur : autorisez l'accès en lecture…");
     try {
-      const a = await rpc<{ email: string }>("accounts.connectGoogle");
+      const a = await rpc<{ email: string }>("accounts.connectGoogle", opts);
       setMsg(`Compte ${a.email} connecté ; synchronisation en cours.`);
     } catch (e) { setMsg(`Connexion impossible : ${e}`); }
     setConnecting(false);
@@ -69,7 +73,9 @@ export function SettingsAccounts() {
       <section aria-labelledby="acc">
         <div className="mb-2 flex items-center gap-3">
           <h2 id="acc" className="text-lg font-medium">Comptes connectés</h2>
-          <button className={btn} onClick={connect} disabled={connecting || !clientId}>{connecting ? "En attente de Google…" : "Connecter un compte Gmail"}</button>
+          <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={wantMail} onChange={(e) => setWantMail(e.target.checked)} /> Mails</label>
+          <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={wantCal} onChange={(e) => setWantCal(e.target.checked)} /> Calendrier</label>
+          <button className={btn} onClick={() => connect({ mail: wantMail, calendar: wantCal })} disabled={connecting || !clientId || (!wantMail && !wantCal)}>{connecting ? "En attente de Google…" : "Connecter un compte Google"}</button>
         </div>
         {msg && <p role="status" className="mb-2 text-sm text-neutral-600 dark:text-neutral-400">{msg}</p>}
         <ul className="space-y-2">
@@ -77,18 +83,20 @@ export function SettingsAccounts() {
           {accounts.map((a) => (
             <li key={a.id} className="flex flex-wrap items-center gap-3 rounded-md border border-neutral-200 p-3 text-sm dark:border-neutral-800">
               <strong>{a.email}</strong>
-              <span className="text-xs text-neutral-500">{a.provider} · {a.mailCount} mails</span>
+              <span className="text-xs text-neutral-500">{a.provider}{a.features.mail ? ` · ${a.mailCount} mails` : ""}{a.features.calendar ? ` · ${a.eventCount} événements` : ""}</span>
               <span className={`text-xs ${a.status === "reauth" || a.syncStatus === "error" ? "text-red-600" : a.syncStatus === "syncing" ? "text-amber-600" : "text-green-600"}`}>
-                {a.status === "reauth" ? "à reconnecter" : a.syncStatus === "syncing" ? "synchronisation…" : a.syncStatus === "error" ? `erreur : ${a.syncError}` : a.lastSyncAt ? `synchronisé ${new Date(a.lastSyncAt).toLocaleString("fr-FR")}` : ""}
+                {a.calendarStatus === "error" ? `calendrier : ${a.calendarError}` : a.status === "reauth" ? "à reconnecter" : a.syncStatus === "syncing" ? "synchronisation…" : a.syncStatus === "error" ? `erreur : ${a.syncError}` : a.lastSyncAt ? `synchronisé ${new Date(a.lastSyncAt).toLocaleString("fr-FR")}` : ""}
               </span>
               <span className="ml-auto flex gap-2">
-                <button className={btn} disabled={a.syncStatus === "syncing"} onClick={() => rpc("mail.sync", { accountId: a.id }).then(refresh)}>Synchroniser</button>
+                {!a.features.calendar && <button className={btn} disabled={connecting} onClick={() => connect({ mail: a.features.mail, calendar: true, loginHint: a.email })}>Ajouter le calendrier</button>}
+                {!a.features.mail && <button className={btn} disabled={connecting} onClick={() => connect({ mail: true, calendar: a.features.calendar, loginHint: a.email })}>Ajouter les mails</button>}
+                <button className={btn} disabled={a.syncStatus === "syncing" || a.calendarStatus === "syncing"} onClick={() => Promise.all([rpc("mail.sync", { accountId: a.id }), rpc("calendar.sync", { accountId: a.id })]).then(refresh)}>Synchroniser</button>
                 <button className={btn} onClick={async () => { if (confirm(`Retirer ${a.email} et supprimer ses mails de cet appareil ?`)) { await rpc("accounts.remove", { id: a.id }); refresh(); } }}>Retirer</button>
               </span>
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-xs text-neutral-500">Accès en lecture seule. Les mails sont stockés uniquement dans la base chiffrée de cet appareil ; rien n'est envoyé à l'IA pour l'instant.</p>
+        <p className="mt-3 text-xs text-neutral-500">Accès en lecture seule (mails et agenda). Les données sont stockées uniquement dans la base chiffrée de cet appareil ; rien n'est envoyé à l'IA pour l'instant.</p>
       </section>
     </div>
   );

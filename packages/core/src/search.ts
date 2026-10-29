@@ -2,7 +2,7 @@ import type { AIRouter } from "@assistant/ai";
 import type { Db } from "@assistant/db";
 
 export interface SearchItem {
-  type: "document" | "conversation" | "mail";
+  type: "document" | "conversation" | "mail" | "event";
   id: string;
   title: string;
   snippet: string;
@@ -92,6 +92,24 @@ function mailHits(db: Db, q: string): SearchItem[] {
   return rows.map((r, i) => ({ type: "mail", ...r, score: 1 / (RRF_K + i) }));
 }
 
+function eventHits(db: Db, q: string): SearchItem[] {
+  const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
+  const rows = db
+    .prepare(
+      `SELECT id, title, start_at AS start, location FROM events
+       WHERE title LIKE ? ESCAPE '\\' OR location LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
+       ORDER BY ABS(start_at - ?) LIMIT 8`,
+    )
+    .all(like, like, like, Date.now()) as { id: string; title: string; start: number; location: string }[];
+  return rows.map((r, i) => ({
+    type: "event",
+    id: String(r.start), // l'UI ouvre le calendrier à cette date
+    title: r.title,
+    snippet: `${new Date(r.start).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" })}${r.location ? " · " + r.location : ""}`,
+    score: 1 / (RRF_K + i),
+  }));
+}
+
 /** Recherche hybride : mots-clés (BM25) + sémantique (KNN), fusionnés par Reciprocal Rank Fusion. */
 export async function search(db: Db, router: AIRouter | null, q: string, limit = 20): Promise<SearchItem[]> {
   q = q.trim();
@@ -117,5 +135,5 @@ export async function search(db: Db, router: AIRouter | null, q: string, limit =
     if (!byDoc.has(hit.docId))
       byDoc.set(hit.docId, { type: "document", id: hit.docId, title: hit.title, snippet: hit.text, score });
   }
-  return [...[...byDoc.values()].slice(0, 10), ...mailHits(db, q), ...conversationHits(db, q)].slice(0, limit);
+  return [...[...byDoc.values()].slice(0, 10), ...mailHits(db, q), ...eventHits(db, q), ...conversationHits(db, q)].slice(0, limit);
 }

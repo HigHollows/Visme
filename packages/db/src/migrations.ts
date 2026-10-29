@@ -147,4 +147,37 @@ export const migrations: Migration[] = [
       END;
     `,
   },
+  {
+    version: 6,
+    sql: `
+      CREATE TABLE events (
+        id TEXT PRIMARY KEY,
+        account_id TEXT REFERENCES accounts(id) ON DELETE CASCADE,
+        calendar_id TEXT,
+        remote_id TEXT,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        location TEXT NOT NULL DEFAULT '',
+        start_at INTEGER NOT NULL,
+        end_at INTEGER NOT NULL,
+        all_day INTEGER NOT NULL DEFAULT 0,
+        source TEXT NOT NULL,             -- google | local | ai
+        source_ref TEXT,                  -- JSON {type, id} : lien cliquable vers le mail/document d'origine
+        confidence REAL,
+        ai_added INTEGER NOT NULL DEFAULT 0,
+        link TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE (account_id, calendar_id, remote_id)
+      );
+      CREATE INDEX events_range ON events(start_at, end_at);
+      CREATE TABLE calendar_sync (
+        account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+        sync_token TEXT,
+        status TEXT NOT NULL DEFAULT 'idle',   -- idle | syncing | error
+        error TEXT,
+        last_sync_at INTEGER
+      );
+    `,
+  },
 ];
