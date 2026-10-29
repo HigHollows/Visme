@@ -1,0 +1,84 @@
+name: Release
+
+# Publie un brouillon de release (.dmg macOS, .exe/.msi Windows) + latest.json pour la mise à jour automatique.
+# Déclenchement : pousser un tag « vX.Y.Z » (voir docs/release.md).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Un exécuteur natif par architecture : le Node embarqué et les modules natifs doivent correspondre à la cible.
+          - { name: macOS Apple Silicon, os: macos-latest, triple: aarch64-apple-darwin, args: "--target aarch64-apple-darwin" }
+          - { name: macOS Intel, os: macos-15-intel, triple: x86_64-apple-darwin, args: "--target x86_64-apple-darwin" }
+          - { name: Windows, os: windows-latest, triple: x86_64-pc-windows-msvc, args: "" }
+    env:
+      TAURI_TARGET_TRIPLE: ${{ matrix.triple }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: pnpm install --frozen-lockfile
+
+      # Cohérence : le tag doit correspondre à la version de l'application.
+      - name: Vérifier la version
+        shell: bash
+        run: |
+          v=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$v" ]; then
+            echo "Le tag ${GITHUB_REF_NAME} ne correspond pas à la version $v (tauri.conf.json). Utilisez scripts/bump-version.mjs."; exit 1
+          fi
+
+      # Le point d'accès de mise à jour pointe vers CE dépôt.
+      - name: Configurer le point d'accès des mises à jour
+        shell: bash
+        run: |
+          node -e "
+            const fs=require('fs');const f='apps/desktop/src-tauri/tauri.conf.json';
+            const c=JSON.parse(fs.readFileSync(f,'utf8'));
+            c.plugins.updater.endpoints=['https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json'];
+            fs.writeFileSync(f,JSON.stringify(c,null,2));"
+
+      - name: Préparer le moteur (bundle, modules natifs, Node embarqué)
+        run: node scripts/build-sidecar.mjs
+      - name: Tester le moteur empaqueté
+        run: node scripts/smoke-sidecar.mjs
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Clé de signature des MISES À JOUR (pas une signature de code système) : voir docs/release.md.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v0.0.0-manual-{0}', github.run_number) }}
+          releaseName: ASSISTANT ${{ github.ref_name }}
+          releaseBody: |
+            Builds **non signés** (pas de certificat Apple/Windows pour l'instant) — voir « Installation » dans le README :
+            - macOS : clic droit › Ouvrir la première fois (ou `xattr -dr com.apple.quarantine /Applications/ASSISTANT.app`).
+            - Windows : SmartScreen › Informations complémentaires › Exécuter quand même.
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json

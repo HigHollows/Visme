@@ -5,7 +5,14 @@ import { rpc } from "./rpc";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { Chat } from "./pages/Chat";
 import { MeetingRecorder } from "./audio";
+import { LockScreen } from "./LockScreen";
 import { Meetings } from "./pages/Meetings";
+import { SettingsAbout, checkForUpdate } from "./pages/SettingsAbout";
+import { SettingsAdvanced } from "./pages/SettingsAdvanced";
+import { SettingsFolders } from "./pages/SettingsFolders";
+import { SettingsGeneral } from "./pages/SettingsGeneral";
+import { SettingsMemory } from "./pages/SettingsMemory";
+import { SettingsPrivacy } from "./pages/SettingsPrivacy";
 import { SettingsMeetings } from "./pages/SettingsMeetings";
 import { SettingsProfiles, type Registry } from "./pages/SettingsProfiles";
 import { Deadlines } from "./pages/Deadlines";
@@ -29,9 +36,35 @@ const SECTIONS = [
   "Réunions", "Chat", "Graphe", "À valider", "Plugins", "Settings",
 ] as const;
 
+const SETTINGS_TABS = ["Général", "Profils", "Comptes", "IA", "Agent", "Dossiers", "Mémoire", "Style", "Préréglages", "Réunions", "Confidentialité", "Avancé", "À propos"] as const;
+type SettingsTab = (typeof SETTINGS_TABS)[number];
+
 export function App() {
+  const [lock, setLock] = useState<{ enabled: boolean; locked: boolean; idleMinutes: number } | null>(null);
+  useEffect(() => {
+    // Le démarrage du moteur peut durer un instant : on attend que la coque soit prête avant d'afficher quoi que ce soit.
+    let stop = false;
+    const poll = async () => {
+      for (let i = 0; i < 100 && !stop; i++) {
+        try {
+          const s = await invoke<{ ready: boolean; enabled: boolean; locked: boolean; idleMinutes: number }>("lock_status");
+          if (s.ready) return setLock(s);
+        } catch { /* coque pas encore prête */ }
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      setLock({ enabled: false, locked: false, idleMinutes: 0 });
+    };
+    void poll();
+    return () => { stop = true; };
+  }, []);
+  if (!lock) return null;
+  if (lock.locked) return <LockScreen />;
+  return <Unlocked lock={lock} />;
+}
+
+function Unlocked({ lock }: { lock: { enabled: boolean; idleMinutes: number } }) {
   const [active, setActive] = useState<(typeof SECTIONS)[number]>("Accueil");
-  const [settingsTab, setSettingsTab] = useState<"IA" | "Comptes" | "Agent" | "Style" | "Préréglages" | "Profils" | "Réunions">("Comptes");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("Général");
   const [pending, setPending] = useState(0);
   const [reg, setReg] = useState<Registry | null>(null);
   const [profileMenu, setProfileMenu] = useState(false);
@@ -59,6 +92,8 @@ export function App() {
       if (payload.method !== "deadline.alert") return;
       const a = payload.params;
       try {
+        const st = await rpc<{ notifications: { deadlineAlerts: boolean } }>("settings.get");
+        if (!st.notifications.deadlineAlerts) return;
         let ok = await isPermissionGranted();
         if (!ok) ok = (await requestPermission()) === "granted";
         if (ok) sendNotification({
@@ -69,6 +104,31 @@ export function App() {
     });
     return () => void un.then((f) => f());
   }, []);
+
+  const [update, setUpdate] = useState<{ version: string } | null>(null);
+
+  // Recherche de mise à jour au démarrage (version de production seulement, et si le réglage est actif).
+  useEffect(() => {
+    if (!import.meta.env.PROD) return;
+    rpc<{ general: { checkUpdates: boolean } }>("settings.get")
+      .then((s) => (s.general.checkUpdates ? checkForUpdate() : null))
+      .then((u) => u && setUpdate({ version: u.version }))
+      .catch(() => { /* hors ligne ou pas de release publiée : silencieux */ });
+  }, []);
+
+  // Verrouillage : raccourci Ctrl/Cmd+L et verrouillage automatique après inactivité.
+  useEffect(() => {
+    if (!lock.enabled) return;
+    const doLock = () => invoke("lock_now").then(() => window.location.reload()).catch(() => {});
+    const onKey = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "l") { e.preventDefault(); void doLock(); } };
+    window.addEventListener("keydown", onKey);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => { if (!lock.idleMinutes) return; clearTimeout(timer); timer = setTimeout(doLock, lock.idleMinutes * 60_000); };
+    const evs = ["mousemove", "keydown", "mousedown", "touchstart", "wheel"] as const;
+    evs.forEach((e) => window.addEventListener(e, arm, { passive: true }));
+    arm();
+    return () => { window.removeEventListener("keydown", onKey); evs.forEach((e) => window.removeEventListener(e, arm)); clearTimeout(timer); };
+  }, [lock.enabled, lock.idleMinutes]);
 
   useEffect(() => { invoke<Registry>("profiles_list").then(setReg).catch(() => {}); }, []);
 
@@ -102,6 +162,26 @@ export function App() {
     const onKey = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") { e.preventDefault(); setProfileMenu((v) => !v); } };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Notification système quand l'agent apporte de nouvelles suggestions (réglage Notifications).
+  const lastPending = useRef<number | null>(null);
+  useEffect(() => {
+    const un = listen<{ method: string; params: { pendingProposals?: number } }>("sidecar-event", async ({ payload }) => {
+      if (payload.method !== "agent.event" || payload.params.pendingProposals === undefined) return;
+      const n = payload.params.pendingProposals;
+      const prev = lastPending.current;
+      lastPending.current = n;
+      if (prev === null || n <= prev) return;
+      try {
+        const st = await rpc<{ notifications: { newProposals: boolean } }>("settings.get");
+        if (!st.notifications.newProposals) return;
+        let ok = await isPermissionGranted();
+        if (!ok) ok = (await requestPermission()) === "granted";
+        if (ok) sendNotification({ title: "ASSISTANT", body: `${n - prev} nouvelle(s) suggestion(s) à valider` });
+      } catch { /* facultatif */ }
+    });
+    return () => void un.then((f) => f());
   }, []);
 
   useEffect(() => { invoke("set_badge", { count: pending }).catch(() => {}); }, [pending]);
@@ -156,6 +236,7 @@ export function App() {
             </li>
           ))}
         </ul>
+        {lock.enabled && <button onClick={() => invoke("lock_now").then(() => window.location.reload())} className="mt-4 w-full rounded-md px-3 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-50 dark:hover:bg-neutral-900">🔒 Verrouiller</button>}
       </nav>
       <main className="flex-1 overflow-y-auto p-8">
         {rec && (
@@ -166,16 +247,30 @@ export function App() {
           </div>
         )}
         {recErr && <p role="alert" className="mb-3 text-sm text-red-600">{recErr}</p>}
+        {update && (
+          <div role="status" className="mb-4 flex items-center gap-3 rounded-md bg-blue-50 px-4 py-2 text-sm text-blue-900 dark:bg-blue-950/50 dark:text-blue-100">
+            Version <strong>{update.version}</strong> disponible.
+            <button className="rounded border border-blue-300 px-2 py-0.5 hover:bg-blue-100 dark:border-blue-700 dark:hover:bg-blue-900" onClick={() => { setSettingsTab("À propos"); setActive("Settings"); setUpdate(null); }}>Voir</button>
+            <button className="ml-auto px-1" aria-label="Ignorer" onClick={() => setUpdate(null)}>×</button>
+          </div>
+        )}
         <h1 className="text-2xl font-semibold">{active}</h1>
         {active === "Settings" ? (
-          <div className="mt-4">
-            <div role="tablist" aria-label="Sections des réglages" className="mb-4 flex gap-2">
-              {(["Comptes", "IA", "Agent", "Style", "Préréglages", "Profils", "Réunions"] as const).map((t) => (
-                <button key={t} role="tab" aria-selected={settingsTab === t} onClick={() => setSettingsTab(t)}
-                  className={`rounded-md px-3 py-1 text-sm ${settingsTab === t ? "bg-neutral-100 font-medium dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-900"}`}>{t}</button>
-              ))}
+          <div className="mt-4 flex gap-6">
+            <nav aria-label="Sections des réglages" className="w-44 shrink-0">
+              <ul className="space-y-0.5">
+                {SETTINGS_TABS.map((t) => (
+                  <li key={t}><button onClick={() => setSettingsTab(t)} aria-current={settingsTab === t ? "page" : undefined}
+                    className={`w-full rounded-md px-3 py-1.5 text-left text-sm ${settingsTab === t ? "bg-neutral-100 font-medium dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-900"}`}>{t}</button></li>
+                ))}
+              </ul>
+            </nav>
+            <div className="min-w-0 flex-1">
+              {settingsTab === "Général" ? <SettingsGeneral /> : settingsTab === "Profils" ? <SettingsProfiles /> : settingsTab === "IA" ? <SettingsAI />
+                : settingsTab === "Agent" ? <SettingsAgent /> : settingsTab === "Dossiers" ? <SettingsFolders /> : settingsTab === "Mémoire" ? <SettingsMemory />
+                : settingsTab === "Style" ? <SettingsStyle /> : settingsTab === "Préréglages" ? <SettingsPresets /> : settingsTab === "Réunions" ? <SettingsMeetings />
+                : settingsTab === "Confidentialité" ? <SettingsPrivacy /> : settingsTab === "Avancé" ? <SettingsAdvanced /> : settingsTab === "À propos" ? <SettingsAbout /> : <SettingsAccounts />}
             </div>
-            {settingsTab === "IA" ? <SettingsAI /> : settingsTab === "Agent" ? <SettingsAgent /> : settingsTab === "Style" ? <SettingsStyle /> : settingsTab === "Préréglages" ? <SettingsPresets /> : settingsTab === "Profils" ? <SettingsProfiles /> : settingsTab === "Réunions" ? <SettingsMeetings /> : <SettingsAccounts />}
           </div>
         ) : active === "Chat" ? (
           <div className="mt-4"><Chat openId={target.chat} onOpenSource={(type, id) => {

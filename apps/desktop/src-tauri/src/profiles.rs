@@ -85,3 +85,44 @@ pub fn clean_color(c: &str) -> String {
     let ok = c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|x| x.is_ascii_hexdigit());
     if ok { c.to_string() } else { "#64748b".into() }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identifiants_sans_caracteres_dangereux() {
+        for name in ["Perso", "Association / Club ../..", "Éléphant & Cie", "   ", "日本語", "a".repeat(100).as_str()] {
+            let id = make_id(name).unwrap();
+            assert!(id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'), "id sûr pour un nom de fichier : {id}");
+            assert!(!id.contains(".."));
+            assert!(id.len() <= 24 + 1 + 6);
+        }
+        assert_ne!(make_id("Perso").unwrap(), make_id("Perso").unwrap(), "suffixe aléatoire");
+    }
+
+    #[test]
+    fn validation_des_noms_et_couleurs() {
+        assert!(clean_name("  ").is_err());
+        assert!(clean_name(&"x".repeat(41)).is_err());
+        assert_eq!(clean_name("  Pro ").unwrap(), "Pro");
+        assert_eq!(clean_color("#16a34a"), "#16a34a");
+        assert_eq!(clean_color("red; background:url(x)"), "#64748b");
+        assert_eq!(clean_color("#12345"), "#64748b");
+    }
+
+    #[test]
+    fn registre_par_defaut_et_reparation() {
+        let dir = std::env::temp_dir().join(format!("assistant-reg-test-{}", std::process::id()));
+        let r = Registry::load(&dir);
+        assert_eq!(r.current, "default");
+        assert_eq!(r.profiles[0].name, "Pro");
+        // profil courant inexistant → on retombe sur le premier profil
+        let broken = Registry { current: "fantome".into(), profiles: vec![Profile { id: "perso-1".into(), name: "Perso".into(), color: "#16a34a".into(), providers: vec![] }] };
+        broken.save(&dir).unwrap();
+        assert_eq!(Registry::load(&dir).current, "perso-1");
+        std::fs::write(dir.join("profiles.json"), "{ corrompu").unwrap();
+        assert_eq!(Registry::load(&dir).current, "default", "fichier corrompu → registre par défaut");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

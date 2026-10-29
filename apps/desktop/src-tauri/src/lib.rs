@@ -1,6 +1,8 @@
+mod lock;
 mod profiles;
 mod sidecar;
 
+use lock::{hash_password, verify_password, LockConfig, LockState};
 use profiles::{clean_color, clean_name, make_id, Profile, Registry};
 use sidecar::{Sidecar, SidecarState};
 use std::path::PathBuf;
@@ -25,6 +27,9 @@ pub struct ShortcutRegistered(pub Mutex<Option<Shortcut>>);
 /// Affiche (ou masque) la petite fenêtre de capture rapide, même si la fenêtre principale est cachée.
 fn toggle_capture(app: &tauri::AppHandle) {
     use tauri::Emitter;
+    if app.state::<LockState>().is_locked() {
+        return; // verrouillé : la capture rapide ne doit pas contourner le mot de passe
+    }
     let Some(w) = app.get_webview_window("capture") else { return };
     if w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false) {
         let _ = w.hide();
@@ -132,13 +137,115 @@ async fn secret_set(app: tauri::AppHandle, state: State<'_, SidecarState>, reg: 
 
 pub struct ProfileState(pub Mutex<Registry>);
 
-fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app.path().app_data_dir().map_err(|e| e.to_string())
+/// Démarre le moteur pour le profil actif (ouvre la base chiffrée avec sa clé du trousseau) et enregistre le raccourci de capture.
+/// Appelé au lancement, ou après déverrouillage si un mot de passe est défini.
+async fn boot(app: &tauri::AppHandle) -> Result<(), String> {
+    let dir = data_dir(app)?;
+    let profile = app.state::<ProfileState>().0.lock().unwrap().current.clone();
+    let bundled = sidecar::launch_spec(app)?.bundled_plugins;
+    let sc = Sidecar::spawn(app.clone())?;
+    sc.init(&dir.to_string_lossy(), &profile, &bundled.to_string_lossy()).await?;
+    *app.state::<SidecarState>().0.lock().unwrap() = Some(sc.clone());
+    let accel = sc
+        .call("settings.get", serde_json::json!({}))
+        .await
+        .ok()
+        .and_then(|s| s["capture"]["shortcut"].as_str().map(String::from))
+        .unwrap_or_else(|| DEFAULT_SHORTCUT.to_string());
+    if let Err(e) = register_shortcut(app, &accel).or_else(|_| register_shortcut(app, DEFAULT_SHORTCUT)) {
+        eprintln!("[shell] raccourci de capture non enregistré : {e}");
+    }
+    Ok(())
 }
 
-fn repo_root() -> Result<PathBuf, String> {
-    // En dev, la racine du dépôt est trois niveaux au-dessus de src-tauri.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().map_err(|e| e.to_string())
+#[tauri::command]
+fn lock_status(lock: State<'_, LockState>) -> serde_json::Value {
+    let c = lock.cfg.lock().unwrap();
+    serde_json::json!({ "ready": lock.ready.load(std::sync::atomic::Ordering::SeqCst), "enabled": c.enabled, "locked": lock.is_locked(), "idleMinutes": c.idle_minutes })
+}
+
+#[tauri::command]
+fn lock_set_password(app: tauri::AppHandle, lock: State<'_, LockState>, current: Option<String>, password: String, idle_minutes: u32) -> Result<(), String> {
+    if password.chars().count() < 8 {
+        return Err("Mot de passe trop court (8 caractères minimum)".into());
+    }
+    let mut c = lock.cfg.lock().unwrap();
+    if c.enabled && !verify_password(&current.unwrap_or_default(), &c.hash) {
+        return Err("Mot de passe actuel incorrect".into());
+    }
+    c.hash = hash_password(&password)?;
+    c.enabled = true;
+    c.idle_minutes = idle_minutes.min(240);
+    c.save(&data_dir(&app)?)
+}
+
+#[tauri::command]
+fn lock_disable(app: tauri::AppHandle, lock: State<'_, LockState>, password: String) -> Result<(), String> {
+    let mut c = lock.cfg.lock().unwrap();
+    if !c.enabled {
+        return Ok(());
+    }
+    if !verify_password(&password, &c.hash) {
+        return Err("Mot de passe incorrect".into());
+    }
+    *c = LockConfig::default();
+    c.save(&data_dir(&app)?)
+}
+
+/// Verrouille : le moteur est arrêté (la base chiffrée n'est plus ouverte) jusqu'à la saisie du mot de passe.
+#[tauri::command]
+fn lock_now(app: tauri::AppHandle, lock: State<'_, LockState>, state: State<'_, SidecarState>) -> Result<(), String> {
+    if !lock.cfg.lock().unwrap().enabled {
+        return Err("Aucun mot de passe défini".into());
+    }
+    lock.locked.store(true, std::sync::atomic::Ordering::SeqCst);
+    let old = state.0.lock().unwrap().take();
+    drop(old);
+    if let Some(w) = app.get_webview_window("capture") {
+        let _ = w.hide();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn unlock(app: tauri::AppHandle, lock: State<'_, LockState>, password: String) -> Result<(), String> {
+    if let Some(wait) = lock.throttle() {
+        return Err(format!("Trop d'essais : patientez {} s", wait.as_secs() + 1));
+    }
+    let hash = lock.cfg.lock().unwrap().hash.clone();
+    let ok = tauri::async_runtime::spawn_blocking(move || verify_password(&password, &hash)).await.map_err(|e| e.to_string())?;
+    lock.record(ok);
+    if !ok {
+        return Err("Mot de passe incorrect".into());
+    }
+    boot(&app).await?;
+    lock.locked.store(false, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+/// Effacement total (RGPD) : tous les profils, leurs clés du trousseau, le verrou, puis fermeture.
+#[tauri::command]
+fn erase_all_data(app: tauri::AppHandle, state: State<'_, SidecarState>, reg: State<'_, ProfileState>) -> Result<(), String> {
+    let dir = data_dir(&app)?;
+    let old = state.0.lock().unwrap().take();
+    drop(old); // ferme la base avant de supprimer les fichiers
+    let profiles = reg.0.lock().unwrap().profiles.clone();
+    for p in &profiles {
+        for prov in &p.providers {
+            let _ = sidecar::delete_api_key(&p.id, prov);
+        }
+        sidecar::delete_db_key(&p.id);
+    }
+    if dir.exists() {
+        // Uniquement le dossier de données de l'application.
+        std::fs::remove_dir_all(&dir).map_err(|e| format!("Suppression impossible : {e}"))?;
+    }
+    app.exit(0);
+    Ok(())
+}
+
+fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -178,11 +285,10 @@ async fn profile_switch(app: tauri::AppHandle, state: State<'_, SidecarState>, r
     if reg.0.lock().unwrap().current == id {
         return Ok(());
     }
-    let root = repo_root()?;
-    let bundled = root.join("plugins");
+    let bundled = sidecar::launch_spec(&app)?.bundled_plugins;
     let old = state.0.lock().unwrap().take();
     drop(old); // arrête le sidecar précédent avant d'ouvrir l'autre base
-    let sc = Sidecar::spawn(root, app.clone())?;
+    let sc = Sidecar::spawn(app.clone())?;
     sc.init(&dir.to_string_lossy(), &id, &bundled.to_string_lossy()).await?;
     *state.0.lock().unwrap() = Some(sc);
     {
@@ -227,10 +333,9 @@ fn profile_delete(app: tauri::AppHandle, reg: State<'_, ProfileState>, id: Strin
 async fn profiles_overview(app: tauri::AppHandle, reg: State<'_, ProfileState>) -> Result<Vec<serde_json::Value>, String> {
     let dir = data_dir(&app)?;
     let (current, profiles) = { let r = reg.0.lock().unwrap(); (r.current.clone(), r.profiles.clone()) };
-    let root = repo_root()?;
     let mut out = vec![];
     for p in profiles.into_iter().filter(|p| p.id != current) {
-        let sc = Sidecar::spawn_quiet(root.clone())?;
+        let sc = Sidecar::spawn_quiet(&app)?;
         let res = async {
             sc.init_read_only(&dir.to_string_lossy(), &p.id).await?;
             sc.call("overview", serde_json::json!({})).await
@@ -246,6 +351,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -257,20 +365,19 @@ pub fn run() {
         )
         .manage(ShortcutRegistered(Mutex::new(None)))
         .manage(SidecarState(Mutex::new(None)))
+        .manage(LockState::pending())
         .manage(ProfileState(Mutex::new(Registry { current: String::new(), profiles: vec![] })))
         .setup(|app| {
-            // En dev, la racine du dépôt est trois niveaux au-dessus de src-tauri.
-            let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
             let data_dir = app.path().app_data_dir()?;
             let registry = Registry::load(&data_dir);
-            let profile = registry.current.clone();
             registry.save(&data_dir)?;
             *app.state::<ProfileState>().0.lock().unwrap() = registry;
-            let root = root.canonicalize()?;
-            let bundled = root.join("plugins");
-            let sc = Sidecar::spawn(root, app.handle().clone())?;
-            tauri::async_runtime::block_on(sc.init(&data_dir.to_string_lossy(), &profile, &bundled.to_string_lossy()))?;
-            *app.state::<SidecarState>().0.lock().unwrap() = Some(sc);
+            let lock_cfg = LockConfig::load(&data_dir);
+            app.state::<LockState>().init(lock_cfg.clone());
+            // Verrou actif : on ne démarre PAS le moteur (la base reste fermée) jusqu'au déverrouillage.
+            if !lock_cfg.enabled {
+                tauri::async_runtime::block_on(boot(app.handle()))?;
+            }
 
             // Fenêtre de capture rapide : créée masquée, affichée par le raccourci global.
             WebviewWindowBuilder::new(app, "capture", WebviewUrl::App("index.html".into()))
@@ -280,14 +387,13 @@ pub fn run() {
                 .always_on_top(true)
                 .visible(false)
                 .build()?;
-            let accel = tauri::async_runtime::block_on(app.state::<SidecarState>().get()?.call("settings.get", serde_json::json!({})))
-                .ok()
-                .and_then(|s| s["capture"]["shortcut"].as_str().map(String::from))
-                .unwrap_or_else(|| DEFAULT_SHORTCUT.to_string());
-            if let Err(e) = register_shortcut(app.handle(), &accel).or_else(|_| register_shortcut(app.handle(), DEFAULT_SHORTCUT)) {
-                eprintln!("[shell] raccourci de capture non enregistré : {e}");
-            }
 
+            // Lancé à l'ouverture de session (--hidden) : on démarre dans la barre de menus, fenêtre masquée.
+            if std::env::args().any(|a| a == "--hidden") {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
             // Icône de la zone de notification : l'agent continue de tourner fenêtre fermée.
             let open = MenuItem::with_id(app, "open", "Ouvrir ASSISTANT", true, None::<&str>)?;
             let cap = MenuItem::with_id(app, "capture", "Capture rapide", true, None::<&str>)?;
@@ -304,6 +410,7 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+            app.state::<LockState>().ready.store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -313,7 +420,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![app_version, rpc, secret_set, set_badge, set_capture_shortcut, hide_capture, capture_screen, profiles_list, profile_create, profile_rename, profile_switch, profile_delete, profiles_overview])
+        .invoke_handler(tauri::generate_handler![app_version, rpc, secret_set, set_badge, lock_status, lock_set_password, lock_disable, lock_now, unlock, erase_all_data, set_capture_shortcut, hide_capture, capture_screen, profiles_list, profile_create, profile_rename, profile_switch, profile_delete, profiles_overview])
         .build(tauri::generate_context!())
         .expect("erreur au lancement de l'application")
         .run(|app, event| {

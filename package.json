@@ -3,15 +3,21 @@
   "private": true,
   "version": "0.0.0",
   "packageManager": "pnpm@11.24.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -b",
-    "lint": "echo \"lint: à configurer\""
+    "typecheck": "tsc -p tsconfig.json && pnpm --filter @assistant/desktop exec tsc --noEmit",
+    "build:engine": "node scripts/build-sidecar.mjs",
+    "smoke:engine": "node scripts/smoke-sidecar.mjs",
+    "dev": "pnpm --filter @assistant/desktop tauri dev",
+    "build:app": "node scripts/build-sidecar.mjs && pnpm --filter @assistant/desktop tauri build"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0",
-    "@types/node": "^22.0.0"
+    "vitest": "^2.1.0"
   }
 }

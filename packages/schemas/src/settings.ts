@@ -14,6 +14,8 @@ export const settingsSchema = z.object({
       language: z.enum(["fr", "en"]).default("fr"),
       theme: z.enum(["system", "light", "dark"]).default("system"),
       launchAtLogin: z.boolean().default(false),
+      /** Recherche automatique de mises à jour au démarrage (contacte GitHub, n'envoie que la version et le système). */
+      checkUpdates: z.boolean().default(true),
     })
     .default({}),
   ai: z
@@ -42,6 +44,13 @@ export const settingsSchema = z.object({
     .object({
       /** Alertes avant la prochaine échéance et avant la date limite de résiliation. */
       alertDays: z.array(z.number().int().min(0).max(365)).max(8).default([30, 7, 1]),
+    })
+    .default({}),
+  notifications: z
+    .object({
+      deadlineAlerts: z.boolean().default(true),
+      /** Notification système quand l'agent a de nouvelles suggestions à valider. */
+      newProposals: z.boolean().default(false),
     })
     .default({}),
   meetings: z

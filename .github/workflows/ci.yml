@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Types + tests unitaires du cœur (sidecar, IA, base, connecteurs, plugins…).
+  test:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          # Windows : suite de tests non encore validée localement → n'échoue pas la CI, mais reste visible.
+          - os: windows-latest
+            experimental: true
+    continue-on-error: ${{ matrix.experimental == true }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  # Le moteur EMPAQUETÉ (bundle + Node embarqué + modules natifs) fonctionne sur chaque système.
+  engine-smoke:
+    name: Moteur empaqueté (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/build-sidecar.mjs
+      - run: node scripts/smoke-sidecar.mjs
+
+  # La coque Tauri compile (macOS suffit pour détecter les erreurs de code ; Windows est compilé à la release).
+  shell:
+    name: Coque Tauri (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/build-sidecar.mjs   # crée binaries/ et resources/ exigés par tauri-build
+      - run: pnpm --filter @assistant/desktop build
+      - run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - run: cargo test --lib --manifest-path apps/desktop/src-tauri/Cargo.toml   # verrou (Argon2), profils

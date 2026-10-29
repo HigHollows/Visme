@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter};
+#[cfg(not(debug_assertions))]
+use tauri::Manager;
 use tokio::sync::oneshot;
 
 const KEYRING_SERVICE: &str = "app.assistant.desktop";
@@ -66,6 +68,55 @@ pub fn delete_db_key(profile: &str) {
     }
 }
 
+/// Comment lancer le moteur : en développement, Node + tsx sur les sources ; en production, le Node embarqué
+/// (sidecar Tauri, à côté de l'exécutable) sur le bundle livré dans les ressources.
+pub struct Launch {
+    program: PathBuf,
+    args: Vec<String>,
+    cwd: PathBuf,
+    pub bundled_plugins: PathBuf,
+}
+
+pub fn launch_spec(app: &AppHandle) -> Result<Launch, String> {
+    #[cfg(debug_assertions)]
+    {
+        let _ = app;
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().map_err(|e| e.to_string())?;
+        Ok(Launch {
+            program: PathBuf::from("node"),
+            args: vec!["--import".into(), "tsx".into(), "src/main.ts".into()],
+            cwd: root.join("apps/sidecar"),
+            bundled_plugins: root.join("plugins"),
+        })
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let res = app.path().resource_dir().map_err(|e| e.to_string())?;
+        let exe_dir = std::env::current_exe().map_err(|e| e.to_string())?.parent().ok_or("dossier de l'exécutable introuvable")?.to_path_buf();
+        let node = exe_dir.join(if cfg!(windows) { "node.exe" } else { "node" });
+        if !node.exists() {
+            return Err(format!("Moteur introuvable : {}", node.display()));
+        }
+        Ok(Launch {
+            program: node,
+            args: vec![res.join("sidecar/sidecar.mjs").to_string_lossy().into_owned()],
+            cwd: res.join("sidecar"),
+            bundled_plugins: res.join("plugins"),
+        })
+    }
+}
+
+fn command(l: &Launch) -> Command {
+    let mut c = Command::new(&l.program);
+    c.args(&l.args).current_dir(&l.cwd);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW : pas de fenêtre de console
+    }
+    c
+}
+
 /// Processus Node enfant, parlant JSON-RPC ligne à ligne.
 /// Un thread lit stdout : les réponses (avec `id`) réveillent l'appelant,
 /// les notifications (sans `id`) sont relayées à l'UI sous l'événement `sidecar-event`.
@@ -77,11 +128,9 @@ pub struct Sidecar {
 }
 
 impl Sidecar {
-    /// En dev on lance le script via node ; le packaging en binaire autonome viendra en phase 5.
-    pub fn spawn(root: PathBuf, app: AppHandle) -> Result<Arc<Self>, String> {
-        let mut child = Command::new("node")
-            .args(["--import", "tsx", "src/main.ts"])
-            .current_dir(root.join("apps/sidecar"))
+    pub fn spawn(app: AppHandle) -> Result<Arc<Self>, String> {
+        let l = launch_spec(&app)?;
+        let mut child = command(&l)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -117,10 +166,9 @@ impl Sidecar {
     }
 
     /// Sidecar temporaire (vue combinée) : ses éventuelles notifications ne sont pas relayées à l'interface.
-    pub fn spawn_quiet(root: PathBuf) -> Result<Arc<Self>, String> {
-        let mut child = Command::new("node")
-            .args(["--import", "tsx", "src/main.ts"])
-            .current_dir(root.join("apps/sidecar"))
+    pub fn spawn_quiet(app: &AppHandle) -> Result<Arc<Self>, String> {
+        let l = launch_spec(app)?;
+        let mut child = command(&l)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

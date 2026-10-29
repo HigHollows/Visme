@@ -16,6 +16,8 @@ import { PresetService } from "./presets";
 import { DraftService, StyleService } from "./style";
 import { PluginManager } from "./plugins/manager";
 import { MeetingService } from "./meetings/service";
+import { AdminService } from "./admin";
+import { WatchService } from "./watch";
 import { CaptureService } from "./capture";
 import { ProposalService } from "./proposals";
 import { search } from "./search";
@@ -58,13 +60,15 @@ export function createApp(opts: AppOptions = {}): RpcServer {
     mkdirSync(p.dataDir, { recursive: true });
     dataDirPath = p.dataDir;
     bundledPluginsDir = p.bundledPluginsDir;
-    db = openDatabase(join(p.dataDir, `${profile}.db`), { key: p.key });
+    dbFile = join(p.dataDir, `${profile}.db`);
+    db = openDatabase(dbFile, { key: p.key });
     if (p.readOnly) {
       // Vue combinée : ce sidecar n'a ni agent, ni clés, ni accès réseau, et ne répond qu'à « overview ».
       rpc.setGuard((m) => (m === "overview" || m === "ping" ? null : "Profil ouvert en lecture seule"));
       return { ok: true };
     }
     agent().configure();
+    watcher().startAll();
     return { ok: true };
   });
 
@@ -88,6 +92,25 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   });
 
   rpc.register("settings.export", () => exportSettings(loadSettings()));
+
+  /** Importe des réglages exportés : validés par le schéma ; les clés API ne sont jamais importées (elles n'existent pas dans l'export). */
+  rpc.register("settings.import", (p: { json: string }) => {
+    let raw: unknown;
+    try { raw = JSON.parse(p.json); } catch { throw new RpcError(-32602, "Fichier JSON illisible"); }
+    const s = migrateSettings(raw);
+    const d = need();
+    d.prepare("INSERT INTO kv(key,value) VALUES('settings',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(s));
+    audit(d, "user", "settings.import");
+    agent().configure();
+    return s;
+  });
+  rpc.register("settings.reset", () => {
+    const d = need();
+    d.prepare("DELETE FROM kv WHERE key='settings'").run();
+    audit(d, "user", "settings.reset");
+    agent().configure();
+    return loadSettings();
+  });
 
   rpc.register("ai.setKeys", (p: { keys: Record<string, string> }) => {
     for (const [id, k] of Object.entries(p.keys)) {
@@ -267,6 +290,28 @@ export function createApp(opts: AppOptions = {}): RpcServer {
     return r;
   });
 
+  let dbFile = "";
+  let watchSvc: WatchService | null = null;
+  const watcher = () => (watchSvc ??= new WatchService({ db: need(), add: (p) => docs().add(p), notify }));
+  let adminSvc: AdminService | null = null;
+  const admin = () => (adminSvc ??= new AdminService(need(), () => dbFile));
+
+  rpc.register("watch.list", () => watcher().list());
+  rpc.register("watch.add", (p: { path: string }) => (watcher().add(p.path), { ok: true }));
+  rpc.register("watch.remove", (p: { path: string }) => (watcher().remove(p.path), { ok: true }));
+  rpc.register("watch.scan", async (p: { path?: string }) => {
+    const dirs = p?.path ? [p.path] : watcher().list().map((f) => f.path);
+    let n = 0;
+    for (const d of dirs) n += await watcher().scan(d);
+    return { candidates: n };
+  });
+
+  rpc.register("privacy.export", (p: { path: string }) => admin().exportAll(String(p.path), exportSettings(loadSettings())));
+  rpc.register("diagnostics.get", () => admin().diagnostics());
+  rpc.register("memory.stats", () => admin().memoryStats());
+  rpc.register("memory.export", () => admin().memoryExport());
+  rpc.register("memory.import", (p: { data: unknown }) => admin().memoryImport(p.data));
+
   let styleSvc: StyleService | null = null;
   const style = () => (styleSvc ??= new StyleService({ db: need(), settings: loadSettings, router: getRouter }));
   let draftSvc: DraftService | null = null;
@@ -285,6 +330,8 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   rpc.register("plugins.installFolder", (p: { path: string }) => plugins().install(p.path));
   rpc.register("plugins.enable", (p: { id: string; permissions: string[] }) => (plugins().enable(p.id, p.permissions ?? []), { ok: true }));
   rpc.register("plugins.disable", (p: { id: string }) => (plugins().disable(p.id), { ok: true }));
+  /** Teste un outil de plugin à la main (utile aux auteurs de plugins). */
+  rpc.register("plugins.callTool", async (p: { name: string; args?: unknown }) => ({ result: await plugins().callTool(p.name, p.args ?? {}) }));
   rpc.register("plugins.remove", (p: { id: string }) => (plugins().remove(p.id), { ok: true }));
 
   rpc.register("style.list", () => ({ profiles: style().list(), groups: style().groups(), learningEnabled: loadSettings().style.learningEnabled }));
@@ -372,7 +419,7 @@ export function createApp(opts: AppOptions = {}): RpcServer {
     return { started: true };
   });
   rpc.register("agent.reanalyze", (p: { mailId: string }) => (agent().reanalyze(p.mailId), { ok: true }));
-  rpc.register("digest.get", (p: { force?: boolean }) => agent().digest(!!p?.force));
+  rpc.register("digest.get", (p: { force?: boolean; period?: "day" | "week" }) => agent().digest(!!p?.force, p?.period === "week" ? "week" : "day"));
 
   rpc.register("mail.list", (p: any) => mail().list(p ?? {}));
   rpc.register("mail.get", (p: { id: string }) => mail().get(p.id));
@@ -382,11 +429,7 @@ export function createApp(opts: AppOptions = {}): RpcServer {
   );
 
 
-  rpc.register("audit.list", (p: { limit?: number }) =>
-    need()
-      .prepare("SELECT id, at, actor, action, detail FROM audit_log ORDER BY id DESC LIMIT ?")
-      .all(Math.min(p.limit ?? 50, 500)),
-  );
+  rpc.register("audit.list", (p: { limit?: number; actor?: string; action?: string; beforeId?: number }) => admin().auditLog(p ?? {}));
 
   return rpc;
 }

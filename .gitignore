@@ -4,3 +4,8 @@ target
 .DS_Store
 *.db
 .env*
+
+# Artefacts de packaging (générés par scripts/build-sidecar.mjs)
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/resources/
+apps/desktop/src-tauri/gen/
